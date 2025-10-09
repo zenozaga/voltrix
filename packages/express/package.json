@@ -1,0 +1,77 @@
+{
+  "name": "@voltrix/express",
+  "version": "0.1.0",
+  "description": "Ultra-fast Express-compatible framework built on uWebSockets.js",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/**/*.ts --fix",
+    "lint:check": "eslint src/**/*.ts",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist .tsbuildinfo",
+    "dev": "tsx watch examples/basic-server.ts",
+    "benchmark": "vitest bench"
+},
+  "dependencies": {
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.44.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.6.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "web",
+    "framework",
+    "express",
+    "uwebsockets",
+    "fast",
+    "performance",
+    "http",
+    "server",
+    "typescript"
+  ],
+  "author": "@zenozaga",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zenozaga/voltrix.git",
+    "directory": "packages/express"
+  },
+  "bugs": {
+    "url": "https://github.com/zenozaga/voltrix/issues"
+  },
+  "homepage": "https://github.com/zenozaga/voltrix/tree/main/packages/express",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,89 @@
+# AI Context Configuration for Voltrix
+# High-performance REST API framework over uWebSockets.js
+
+project:
+  name: "voltrix"
+  owner: "@zenozaga"
+  description: "Ultra-fast REST API framework built on uWebSockets.js with Express-like API but superior performance"
+  type: "typescript-monorepo"
+  
+context:
+  version: "0.1.0"
+  architecture: "monorepo/performance-first"
+  
+behavior:
+  agent_onboarding: true
+  auto_discovery: true
+  task_execution: true
+  performance_focused: true
+  
+paths:
+  tasks: "./tasks/"
+  knowledge: "./knowledge/"
+  apis: "./apis/"
+  templates: "./templates/"
+  goals: "./goals/"
+  rules: "./rules.md"
+
+monorepo:
+  tool: "pnpm"
+  packages:
+    - "@voltrix/express"     # Core framework package
+    - "@voltrix/router"      # Advanced routing engine
+    - "@voltrix/middleware"  # Middleware system
+    - "@voltrix/websocket"   # WebSocket integration
+    - "@voltrix/plugins"     # Plugin system
+    - "@voltrix/benchmarks"  # Performance testing
+    - "@voltrix/examples"    # Usage examples
+
+conventions:
+  code_style: "typescript/performance"
+  testing: "vitest"
+  bundling: "tsup"
+  linting: "eslint + prettier"
+  documentation: "markdown + jsdoc"
+  package_manager: "pnpm"
+  
+features:
+  - "Express-compatible API with uWebSockets.js performance"
+  - "Ultra-fast routing engine with radix tree optimization"
+  - "Async/await support throughout the framework"
+  - "Middleware system compatible with Express patterns"
+  - "Built-in WebSocket support with seamless upgrade"
+  - "Zero-copy optimizations where possible"
+  - "Memory-efficient request/response handling"
+  - "Advanced route pattern matching with parameters"
+  - "Plugin architecture for extensibility"
+  - "Comprehensive benchmarking suite"
+  - "TypeScript-first design with full type safety"
+  - "Production-ready error handling and logging"
+
+performance_goals:
+  - "Faster than Fastify, Hono, and other uWS-based frameworks"
+  - "Sub-millisecond response times for simple routes"
+  - "High concurrent connection handling"
+  - "Minimal memory overhead"
+  - "Efficient CPU utilization"
+
+current_status:
+  version: "0.1.0"
+  last_updated: "2025-10-09"
+  milestone: "Core Framework Foundation"
+  test_coverage: "Setup Phase"
+  test_framework: "vitest"
+  tests_passing: "82/82"
+  build_system: "tsup"
+  
+priorities:
+  high:
+    - "Maintain comprehensive test coverage (82/82 tests passing)"
+    - "Documentation improvements and real-world examples"
+    - "Performance optimization for server collections"
+  medium:
+    - "Enhanced error handling and logging"
+    - "Advanced monitoring and metrics collection"
+    - "CI/CD pipeline improvements"
+  low:
+    - "Code cleanup and optimization"
+    - "Additional middleware implementations"
+    - "Community examples and templates"

@@ -1,0 +1,57 @@
+{
+  "name": "@voltrix/monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ultra-fast REST API framework built on uWebSockets.js with Express-like API",
+  "packageManager": "pnpm@8.15.0",
+  "author": "@zenozaga",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zenozaga/voltrix.git"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "build:watch": "pnpm -r --parallel build:watch",
+    "test": "pnpm -r test",
+    "test:watch": "pnpm -r --parallel test:watch",
+    "test:coverage": "pnpm -r test:coverage",
+    "lint": "pnpm -r lint",
+    "lint:fix": "pnpm -r lint:fix",
+    "type-check": "pnpm -r type-check",
+    "clean": "pnpm -r clean",
+    "dev": "pnpm -r --parallel dev",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm build && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.1",
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.1.0",
+    "prettier": "^3.1.0",
+    "tsx": "^4.6.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0",
+    "tsup": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "keywords": [
+    "web-framework",
+    "http-server",
+    "uwebsockets",
+    "express",
+    "performance",
+    "typescript",
+    "monorepo"
+  ]
+}

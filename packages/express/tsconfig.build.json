@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "composite": false
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "tests",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ]
+}

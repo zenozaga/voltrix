@@ -1,0 +1,12 @@
+{
+  "name": "benchmark-suite",
+  "version": "1.0.0",
+  "scripts": {
+    "bench": "vitest bench --reporter=verbose",
+    "bench:inheritance": "vitest bench benchmarks/inheritance-performance.bench.ts --reporter=verbose",
+    "bench:comparison": "vitest bench benchmarks/architecture-comparison.bench.ts --reporter=verbose",
+    "bench:stress": "vitest bench benchmarks/stress-tests.bench.ts --reporter=verbose",
+    "bench:all": "vitest bench --reporter=verbose --run",
+    "bench:json": "vitest bench --reporter=json > benchmark-results.json"
+  }
+}
