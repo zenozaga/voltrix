@@ -20,28 +20,23 @@
     "package.json"
   ],
   "scripts": {
-    "build": "tsup",
-    "build:watch": "tsup --watch",
+    "build": "tsup src/index.ts --format cjs,esm --dts --out-dir dist --clean",
+    "build:watch": "tsc --watch",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "test:ui": "vitest --ui",
-    "test:coverage": "vitest run --coverage",
-    "lint": "eslint src/**/*.ts --fix",
-    "lint:check": "eslint src/**/*.ts",
+    "benchmark": "vitest bench",
     "type-check": "tsc --noEmit",
-    "clean": "rm -rf dist .tsbuildinfo",
-    "dev": "tsx watch examples/basic-server.ts",
-    "benchmark": "vitest bench"
-},
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix"
+  },
   "dependencies": {
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.44.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
-    "tsx": "^4.6.0",
     "tsup": "^8.0.0",
+    "tsx": "^4.6.0",
     "typescript": "^5.3.0",
-    "vitest": "^1.0.0"
+    "vitest": "3.2.4"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"

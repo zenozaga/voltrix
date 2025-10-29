@@ -1,0 +1,55 @@
+{
+  "name": "@voltrix/benchs",
+  "version": "0.1.0",
+  "description": "Centralized benchmarking suite for Voltrix framework and competitors",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "bench": "vitest --bench"
+  },
+  "dependencies": {
+    "@hapi/hapi": "^21.4.3",
+    "@hapi/joi": "^17.1.1",
+    "@koa/bodyparser": "^5.1.1",
+    "@koa/cors": "^5.0.0",
+    "@koa/router": "^13.1.0",
+    "@voltrix/decorator": "../packages/decorator",
+    "@voltrix/injector": "../packages/injector",
+    "@voltrix/express": "../packages/express",
+    "@zenofolio/hyper-decor": "^1.0.61",
+    "autocannon": "^7.15.0",
+    "elysia": "^1.4.10",
+    "express": "^5.1.0",
+    "fastify": "^5.6.1",
+    "inversify": "^7.10.3",
+    "koa": "^2.15.3",
+    "reflect-metadata": "^0.2.2",
+    "tsyringe": "^4.10.0",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.44.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.2"
+  },
+  "keywords": [
+    "benchmark",
+    "performance",
+    "voltrix",
+    "express",
+    "fastify",
+    "koa",
+    "hapi",
+    "uwebsockets",
+    "testing"
+  ],
+  "author": "@zenozaga",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zenozaga/voltrix.git",
+    "directory": "packages/benchs"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

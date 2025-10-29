@@ -1,0 +1,74 @@
+# AI Context Configuration for @voltrix/express
+# Core Express-compatible framework package
+
+project:
+  name: "@voltrix/express"
+  parent: "@voltrix/monorepo"
+  description: "Ultra-fast Express-compatible framework built on uWebSockets.js"
+  type: "typescript-package"
+  
+context:
+  version: "0.1.0"
+  architecture: "performance-first/express-compatible"
+  
+behavior:
+  agent_onboarding: true
+  auto_discovery: true
+  task_execution: true
+  performance_focused: true
+  benchmark_driven: true
+  
+paths:
+  source: "./src/"
+  tests: "./tests/"
+  dist: "./dist/"
+  
+conventions:
+  code_style: "typescript/performance"
+  testing: "vitest"
+  bundling: "tsup"
+  linting: "eslint + prettier"
+  
+core_dependencies:
+  - "uWebSockets.js"
+  
+performance_targets:
+  - "50%+ faster than Fastify on simple routes"
+  - "Sub-millisecond P95 latency for cached responses"
+  - "Zero allocations in hot paths where possible"
+  - "Memory pooling for frequent objects"
+  - "Express API compatibility without performance penalty"
+
+features:
+  - "Express-compatible Application class with method chaining"
+  - "High-performance Request/Response wrapper classes"  
+  - "Optimized routing engine with parameter extraction"
+  - "Minimal-overhead middleware system"
+  - "Async/await support throughout"
+  - "Built-in error handling with typed errors"
+  - "Memory-efficient request processing"
+  - "WebSocket upgrade capability"
+  - "Router WebSocket support with router.ws() method"
+  - "Automatic WebSocket route mounting in routers"
+  - "Production-ready logging and monitoring hooks"
+
+architecture:
+  core_classes:
+    - "App: Main application class (Express-compatible)"
+    - "Request: HTTP request wrapper with performance optimizations"
+    - "Response: HTTP response wrapper with streaming support"
+    - "Router: High-performance routing engine"
+    - "Middleware: Optimized middleware execution pipeline"
+  
+  performance_optimizations:
+    - "Object pooling for Request/Response instances"
+    - "Pre-compiled route patterns for fast matching"
+    - "Minimal function call overhead in hot paths"
+    - "Efficient header and parameter parsing"
+    - "Zero-copy operations where possible"
+
+current_status:
+  version: "0.1.0"
+  last_updated: "2025-10-09"
+  milestone: "Core Framework Foundation"
+  implementation_status: "Initial Setup"
