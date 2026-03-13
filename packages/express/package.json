@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --out-dir dist --clean",
     "build:watch": "tsc --watch",
-    "test": "vitest run",
+    "test": "vitest",
     "benchmark": "vitest bench",
     "type-check": "tsc --noEmit",
     "lint": "eslint src/**/*.ts",

@@ -4,7 +4,7 @@
  */
 
 import {  setMetadata } from './metadata.store.js';
-import { KEY_PARAMS } from '../constants.js';
+import { KEY_PARAMS } from '../symbols.constant.js';
 
 export interface ParameterDescriptor {
   readonly index: number;

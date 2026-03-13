@@ -7,10 +7,10 @@
 export * from './decorators/http.js';
 
 // Voltrix application decorators  
-export * from './decorators/voltrix.decorators.js';
+export * from './decorators/voltrix.js';
 
 // Parameter decorators
-export * from './decorators/parameter.decorators.js';
+export * from './decorators/parameter.js';
 
 // Request extensions
 export * from './extensions/request.extensions.js';
@@ -33,7 +33,7 @@ export {
 export {
   createCustomRequestDecorator,
   type ParameterInfo
-} from './decorators/parameter.decorators.js';
+} from './decorators/parameter.js';
 
 // Legacy exports for compatibility
 export * from './decorators/role.js';

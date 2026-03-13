@@ -4,7 +4,7 @@
  */
 
 import { DecoratorHelper } from '../__internal/helpers/decorator.helper.js';
-import { SYMBOLS } from '../__internal/constants.js';
+import { SYMBOLS } from '../__internal/symbols.constant.js';
 import type { MiddlewareFunction } from '@voltrix/express';
 
 /**

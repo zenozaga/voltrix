@@ -15,7 +15,7 @@ import {
   KEY_SCOPES,
   KEY_MIDDLEWARE,
   KEY_LIFECYCLE_HOOKS
-} from '../constants.js';
+} from '../symbols.constant.js';
 
 /**
  * High-performance execution context builder

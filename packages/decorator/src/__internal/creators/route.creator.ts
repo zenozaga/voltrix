@@ -4,7 +4,7 @@
  */
 
 import { DecoratorHelper } from '../helpers/decorator.helper.js';
-import { KEY_TYPE_CONTROLLER, KEY_PARAMS_ROUTE } from '../constants.js';
+import { KEY_TYPE_CONTROLLER, KEY_PARAMS_ROUTE } from '../symbols.constant.js';
 
 export interface RouteOptions {
   middleware?: Function[];

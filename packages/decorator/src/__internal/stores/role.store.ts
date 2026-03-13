@@ -4,7 +4,7 @@
  */
 
 import { setMetadata } from './metadata.store.js';
-import { KEY_ROLES } from '../constants.js';
+import { KEY_ROLES } from '../symbols.constant.js';
 
 export interface RoleDescriptor {
   readonly name: string;

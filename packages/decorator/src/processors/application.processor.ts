@@ -4,13 +4,13 @@
  */
 
 import { getDecorData } from '../__internal/helpers/decorator.helper.js';
-import { SYMBOLS, KEY_PARAMS_ROUTE } from '../__internal/constants.js';
+import { SYMBOLS, KEY_PARAMS_ROUTE } from '../__internal/symbols.constant.js';
 import { RequestHelpers } from '../extensions/request.extensions.js';
 import type { 
   IVoltrixApplication, 
   VoltrixAppOptions, 
   VoltrixModuleOptions 
-} from '../decorators/voltrix.decorators.js';
+} from '../decorators/voltrix.js';
 import type { RouteInfo, RouterList } from '../__internal/creators/route.creator.js';
 
 /**

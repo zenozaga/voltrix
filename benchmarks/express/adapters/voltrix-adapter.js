@@ -3,17 +3,22 @@
  * Adaptador para Voltrix usando la interfaz estándar
  */
 
-import { App } from '../../../packages/express/dist/index.js';
+import { voltrix } from '@voltrix/express';
 import { FrameworkAdapter, STANDARD_RESPONSE } from '../framework-interface.js';
 
 export class VoltrixAdapter extends FrameworkAdapter {
   constructor() {
     super('Voltrix', '1.0.0', 'uWebSockets.js + Prefix Tree + LRU Cache');
+    
+    
+    /**
+     * @type {import('@voltrix/express').Voltrix|null}
+     */
     this.app = null;
   }
 
   async start(port, config = {}) {
-    this.app = new App();
+    this.app = new voltrix();
     
     // Middleware para contar requests (sin usar setHeader que causa problemas)
     this.app.use((req, res, next) => {

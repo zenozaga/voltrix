@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { MiddlewareType } from '../types/middleware';
 import MetadataStore from '../__internal/stores/metadata.store';
-import { SYMBOLS } from '../__internal/constants';
+import { SYMBOLS } from '../__internal/symbols.constant';
 import { Middleware as MW } from '@voltrix/express';
 
 export const Middleware =

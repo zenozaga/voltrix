@@ -7,9 +7,8 @@ import { IRequest, IResponse } from './http.js';
 
 // Next Function
 export type NextFunction = (error?: Error) => void;
-
-// Middleware Types
 export type Middleware = (eq: IRequest, res: IResponse, next: NextFunction) => void | Promise<any>;
+
 export type HandlerFunction = (
   req: IRequest,
   res: IResponse,

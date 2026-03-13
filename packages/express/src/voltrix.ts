@@ -1,39 +1,51 @@
-import {
-  App as UWSApp,
-  type TemplatedApp,
-  type HttpRequest,
-  type HttpResponse,
-  type WebSocketBehavior,
-  us_listen_socket,
-} from 'uWebSockets.js';
+import * as UWS from 'uWebSockets.js';
+import type * as Handlers from './types/handlers.js';
+
+import { Router } from './router.js';
 import { LRUCache } from './common/lru-cache.js';
 import { RouteLRUCache } from './common/route-cache.js';
-import { Router } from './router.js';
-import type {
-  Middleware as MiddlewareFunction,
-  ErrorMiddleware as ErrorMiddlewareFunction,
-  HandlerFunction,
-} from './types/handlers.js';
-import { QueryParser, Request } from './http/request.js';
-import { Response } from './http/response.js';
+
 import { Renderer } from './renderer.js';
+import { Response } from './http/response.js';
+import { QueryParser, Request } from './http/request.js';
 
 interface CompiledHandler {
-  middlewares: MiddlewareFunction[];
-  handler: HandlerFunction;
+  middlewares: Handlers.Middleware[];
+  handler: Handlers.HandlerFunction;
   hasMiddleware: boolean;
 }
 
+interface VoltrixOptions {
+  cacheSize?: number;
+  cacheTTL?: number;
+  routeCacheSize?: number;
+  routeCacheTTL?: number;
+}
+
+/**
+ * Voltrix Framework
+ *
+ * High-performance HTTP/WebSocket server for backend environments
+ * built over uWebSockets.js. Orchestrates:
+ *  - routing
+ *  - middleware execution
+ *  - error pipeline
+ *  - response caching
+ *  - handler caching
+ *  - request/response abstraction
+ */
 export class Voltrix extends Renderer {
-  readonly uws: TemplatedApp;
+  readonly uws: UWS.TemplatedApp;
+
   private readonly handlerCache: LRUCache<CompiledHandler>;
   private readonly routeCache: RouteLRUCache;
 
-  private globalMiddlewares: MiddlewareFunction[] = [];
-  private errorHandlers: ErrorMiddlewareFunction[] = [];
-  private notFoundHandler: HandlerFunction | null = null;
-  private hasGlobalMiddleware = false;
+  private globalMiddlewares: Handlers.Middleware[] = [];
+  private errorHandlers: Handlers.ErrorMiddleware[] = [];
 
+  private notFoundHandler: Handlers.HandlerFunction | null = null;
+
+  private hasGlobalMiddleware = false;
   private listenSocket: any = null;
 
   private stats = {
@@ -42,172 +54,166 @@ export class Voltrix extends Renderer {
     totalRequests: 0,
   };
 
-  constructor(cacheSize = 1000, cacheTTL = 30_000, routeCacheSize = 500, routeCacheTTL = 300_000) {
+  constructor(options?: VoltrixOptions) {
     super();
-    this.uws = UWSApp();
-    this.handlerCache = new LRUCache(cacheSize, cacheTTL);
-    this.routeCache = new RouteLRUCache(routeCacheSize, routeCacheTTL);
+
+    this.uws = UWS.App();
+    this.handlerCache = new LRUCache(options?.cacheSize, options?.cacheTTL);
+    this.routeCache = new RouteLRUCache(options?.routeCacheSize, options?.routeCacheTTL);
   }
 
-  // =========================
+  // =======================================
   // Registration / Composition
-  // =========================
-  use(arg1: string | MiddlewareFunction | Router, arg2?: MiddlewareFunction | Router): this {
+  // =======================================
+
+  /**
+   * Register global middleware or routers.
+   */
+  use(arg1: string | Handlers.Middleware | Router, arg2?: Handlers.Middleware | Router): this {
     if (typeof arg1 === 'function') {
       this.globalMiddlewares.push(arg1);
       this.hasGlobalMiddleware = true;
       this.handlerCache.clear();
-    } else if (arg1 instanceof Router) {
-      this.integrateRouter('', arg1);
-    } else if (typeof arg1 === 'string') {
-      if (arg2 instanceof Router) this.integrateRouter(arg1, arg2);
+      return this;
     }
+
+    if (arg1 instanceof Router) {
+      this.integrateRouter('', arg1);
+      return this;
+    }
+
+    if (typeof arg1 === 'string' && arg2 instanceof Router) {
+      this.integrateRouter(arg1, arg2);
+      return this;
+    }
+
     return this;
   }
 
-  useError(errorHandler: ErrorMiddlewareFunction): this {
-    this.errorHandlers.push(errorHandler);
+  /**
+   * Register global error handler.
+   */
+  useError(handler: Handlers.ErrorMiddleware): this {
+    this.errorHandlers.push(handler);
     return this;
   }
 
-  useNotFound(notFoundHandler: HandlerFunction): this {
-    this.notFoundHandler = notFoundHandler;
+  /**
+   * Set 404 handler.
+   */
+  useNotFound(handler: Handlers.HandlerFunction): this {
+    this.notFoundHandler = handler;
     return this;
   }
 
-  // =========================
-  // HTTP verbs (direct uWS)
-  // =========================
-  get(pattern: string, handler: HandlerFunction): this {
-    this.uws.get(pattern, (res, req) => this.handleRequest(pattern, req, res, handler));
-    return this;
-  }
-  
-  post(pattern: string, handler: HandlerFunction): this {
-    this.uws.post(pattern, (res, req) => this.handleRequest(pattern, req, res, handler));
-    return this;
-  }
-  put(pattern: string, handler: HandlerFunction): this {
-    this.uws.put(pattern, (res, req) => this.handleRequest(pattern, req, res, handler));
-    return this;
-  }
-  delete(pattern: string, handler: HandlerFunction): this {
-    this.uws.del(pattern, (res, req) => this.handleRequest(pattern, req, res, handler));
-    return this;
-  }
-  patch(pattern: string, handler: HandlerFunction): this {
-    this.uws.patch(pattern, (res, req) => this.handleRequest(pattern, req, res, handler));
-    return this;
-  }
-  options(pattern: string, handler: HandlerFunction): this {
-    this.uws.options(pattern, (res, req) => this.handleRequest(pattern, req, res, handler));
-    return this;
-  }
-  head(pattern: string, handler: HandlerFunction): this {
-    this.uws.head(pattern, (res, req) => this.handleRequest(pattern, req, res, handler));
-    return this;
-  }
-  any(pattern: string, handler: HandlerFunction): this {
-    this.uws.any(pattern, (res, req) => this.handleRequest(pattern, req, res, handler));
+  // =======================================
+  // HTTP Registration (single entry point)
+  // =======================================
+
+  private register(method: string, pattern: string, handler: Handlers.HandlerFunction): this {
+    (this.uws as any)[method](pattern, (res: UWS.HttpResponse, req: UWS.HttpRequest) =>
+      this.handleRequest(pattern, req, res, handler)
+    );
     return this;
   }
 
-  // =========================
-  // Router integration (HTTP + WS)
-  // =========================
+  get(pattern: string, handler: Handlers.HandlerFunction) {
+    return this.register('get', pattern, handler);
+  }
+  post(pattern: string, handler: Handlers.HandlerFunction) {
+    return this.register('post', pattern, handler);
+  }
+  put(pattern: string, handler: Handlers.HandlerFunction) {
+    return this.register('put', pattern, handler);
+  }
+  delete(pattern: string, handler: Handlers.HandlerFunction) {
+    return this.register('del', pattern, handler);
+  }
+  patch(pattern: string, handler: Handlers.HandlerFunction) {
+    return this.register('patch', pattern, handler);
+  }
+  options(pattern: string, handler: Handlers.HandlerFunction) {
+    return this.register('options', pattern, handler);
+  }
+  head(pattern: string, handler: Handlers.HandlerFunction) {
+    return this.register('head', pattern, handler);
+  }
+  any(pattern: string, handler: Handlers.HandlerFunction) {
+    return this.register('any', pattern, handler);
+  }
+
+  // =======================================
+  // Router Integration
+  // =======================================
+
+  /**
+   * Register all HTTP and WebSocket routes from a router.
+   */
   private integrateRouter(prefix: string, router: Router): void {
-    const flattened = router.getFlattenedRoutes(prefix);
+    const routes = router.getFlattenedRoutes(prefix);
     const wsRoutes = (router as any).getWsRoutes?.() ?? [];
 
-    // HTTP
-    for (const route of flattened) {
-      const { method, fullPattern, handler, allMiddlewares, errorHandlers } = route;
+    // HTTP routes
+    for (const r of routes) {
+      const { method, fullPattern, handler, allMiddlewares, errorHandlers } = r;
 
-      const compiledHandler = (res: HttpResponse, req: HttpRequest) => {
-        const enhancedReq = new Request(req, fullPattern);
-        const enhancedRes = new Response(res, this);
+      const compiled = (res: UWS.HttpResponse, req: UWS.HttpRequest) => {
+        const vreq = new Request(req, res, fullPattern);
+        const vres = new Response(res, this);
 
-        const combined =
-          this.hasGlobalMiddleware && this.globalMiddlewares.length
-            ? [...this.globalMiddlewares, ...allMiddlewares]
-            : allMiddlewares;
+        const chain = this.globalMiddlewares.length
+          ? [...this.globalMiddlewares, ...allMiddlewares]
+          : allMiddlewares;
 
-        if (combined.length > 0) {
-          this.executeRouterMiddlewareChain(
-            enhancedReq,
-            enhancedRes,
-            handler,
-            combined,
-            errorHandlers
-          );
-        } else {
+        if (chain.length === 0) {
           try {
-            const r = handler(enhancedReq, enhancedRes);
-            if (r && typeof (r as Promise<any>).catch === 'function') {
-              (r as Promise<any>).catch(err => this.handleError(err, enhancedReq, enhancedRes));
-            }
-          } catch (err) {
-            this.handleError(err, enhancedReq, enhancedRes);
+            const out = handler(vreq, vres);
+            if (out instanceof Promise) out.catch(err => this.handleError(err, vreq, vres));
+          } catch (e) {
+            this.handleError(e, vreq, vres);
           }
+          return;
         }
+
+        this.executeRouterMiddlewareChain(vreq, vres, handler, chain, errorHandlers);
       };
 
-      switch (method) {
-        case 'GET':
-          this.uws.get(fullPattern, compiledHandler);
-          break;
-        case 'POST':
-          this.uws.post(fullPattern, compiledHandler);
-          break;
-        case 'PUT':
-          this.uws.put(fullPattern, compiledHandler);
-          break;
-        case 'DELETE':
-          this.uws.del(fullPattern, compiledHandler);
-          break;
-        case 'PATCH':
-          this.uws.patch(fullPattern, compiledHandler);
-          break;
-        case 'OPTIONS':
-          this.uws.options(fullPattern, compiledHandler);
-          break;
-        case 'HEAD':
-          this.uws.head(fullPattern, compiledHandler);
-          break;
-        case 'ANY':
-          this.uws.any(fullPattern, compiledHandler);
-          break;
-      }
+      (this.uws as any)[method.toLowerCase()](fullPattern, compiled);
     }
 
-    // WebSocket
+    // WebSockets
     for (const ws of wsRoutes) {
       const fullPath =
         (prefix && prefix !== '/' ? (prefix.endsWith('/') ? prefix.slice(0, -1) : prefix) : '') +
-        (ws.pattern.startsWith('/') ? ws.pattern : `/${ws.pattern}`);
-      this.uws.ws(fullPath, ws.behavior as WebSocketBehavior<any>);
+        (ws.pattern.startsWith('/') ? ws.pattern : '/' + ws.pattern);
+
+      this.uws.ws(fullPath, ws.behavior as UWS.WebSocketBehavior<any>);
     }
 
     this.handlerCache.clear();
   }
 
+  /**
+   * Execute router-specific middleware chain.
+   */
   private executeRouterMiddlewareChain(
     req: Request,
     res: Response,
-    handler: HandlerFunction,
-    middlewares: MiddlewareFunction[],
-    errorHandlers: ErrorMiddlewareFunction[]
+    handler: Handlers.HandlerFunction,
+    mws: Handlers.Middleware[],
+    errs: Handlers.ErrorMiddleware[]
   ): void {
-    const total = middlewares.length;
     let i = 0;
 
-    const bubbleError = (err: any) => {
-      if (errorHandlers.length === 0) return this.handleError(err, req, res);
+    const onError = (err: any) => {
+      if (errs.length === 0) return this.handleError(err, req, res);
+
       let ei = 0;
       const nextErr = (): void => {
-        if (ei >= errorHandlers.length) return this.handleError(err, req, res);
+        const fn = errs[ei++];
+        if (!fn) return this.handleError(err, req, res);
+
         try {
-          const fn = errorHandlers[ei++] as ErrorMiddlewareFunction;
           fn(err, req, res, nextErr);
         } catch {
           nextErr();
@@ -217,38 +223,34 @@ export class Voltrix extends Renderer {
     };
 
     const next = (err?: any): void => {
-      if (err) return bubbleError(err);
-
-      while (i < total) {
+      if (err) return onError(err);
+      if (i >= mws.length) {
         try {
-          const mw = middlewares[i++] as MiddlewareFunction;
-          const r = mw(req, res, next);
-          if (r && typeof (r as Promise<any>).catch === 'function') {
-            (r as Promise<any>).catch(bubbleError);
-            return;
-          }
+          const r = handler(req, res);
+          if (r instanceof Promise) r.catch(onError);
         } catch (e) {
-          return bubbleError(e);
+          onError(e);
         }
+        return;
       }
 
+      const mw = mws[i++];
       try {
-        const r = handler(req, res);
-        if (r && typeof (r as Promise<any>).catch === 'function') {
-          (r as Promise<any>).catch(bubbleError);
-        }
+        const result = mw(req, res, next);
+        if (result instanceof Promise) result.catch(onError);
       } catch (e) {
-        bubbleError(e);
+        onError(e);
       }
     };
 
     next();
   }
 
-  // =========================
-  // Core execution / errors
-  // =========================
-  private compileHandler(handler: HandlerFunction): CompiledHandler {
+  // =======================================
+  // Request Execution Path
+  // =======================================
+
+  private compileHandler(handler: Handlers.HandlerFunction): CompiledHandler {
     return {
       middlewares: this.globalMiddlewares.length ? [...this.globalMiddlewares] : [],
       handler,
@@ -256,50 +258,99 @@ export class Voltrix extends Renderer {
     };
   }
 
-  private executeWithMiddleware(req: Request, res: Response, compiled: CompiledHandler): void {
+  private async handleRequest(
+    pattern: string,
+    uwsReq: UWS.HttpRequest,
+    uwsRes: UWS.HttpResponse,
+    handler: Handlers.HandlerFunction
+  ) {
+    this.stats.totalRequests++;
+
+    const method = uwsReq.getMethod().toUpperCase();
+    const path = uwsReq.getUrl();
+
+    const cached = this.routeCache.get({ method, path });
+    if (cached) {
+      uwsRes.cork(() => {
+        uwsRes.writeStatus(String(cached.statusCode));
+        for (const [k, v] of Object.entries(cached.headers)) {
+          uwsRes.writeHeader(k, v as string);
+        }
+        uwsRes.end(cached.body);
+      });
+      return;
+    }
+
+    const key = `${method}:${pattern}`;
+    let compiled = this.handlerCache.get(key);
+
+    if (!compiled) {
+      this.stats.cacheMisses++;
+      compiled = this.compileHandler(handler);
+      this.handlerCache.set(key, compiled);
+    } else {
+      this.stats.cacheHits++;
+    }
+
+    const req = new Request(uwsReq, uwsRes, pattern);
+    const res = new Response(uwsRes, this);
+
+    try {
+      if (compiled.hasMiddleware) {
+        this.executeWithMiddleware(req, res, compiled);
+      } else {
+        const out = handler(req, res);
+        if (out instanceof Promise) out.catch(err => this.handleError(err, req, res));
+      }
+    } catch (e) {
+      this.handleError(e, req, res);
+    }
+  }
+
+  private executeWithMiddleware(req: Request, res: Response, compiled: CompiledHandler) {
     const { middlewares, handler } = compiled;
-    const total = middlewares.length;
     let i = 0;
 
-    const handleError = (err: any) => this.handleError(err, req, res);
+    const onError = (err: any) => this.handleError(err, req, res);
 
     const next = (err?: any): void => {
-      if (err) return handleError(err);
+      if (err) return onError(err);
 
-      if (i >= total) {
+      if (i >= middlewares.length) {
         try {
-          const result = handler(req, res);
-          if (result && typeof (result as Promise<any>).catch === 'function') {
-            (result as Promise<any>).catch(handleError);
-          }
+          const r = handler(req, res);
+          if (r instanceof Promise) r.catch(onError);
         } catch (e) {
-          handleError(e);
+          onError(e);
         }
         return;
       }
 
-      const mw = middlewares[i++] as MiddlewareFunction;
+      const mw = middlewares[i++];
       try {
         const r = mw(req, res, next);
-        if (r && typeof (r as Promise<any>).catch === 'function') {
-          (r as Promise<any>).catch(handleError);
-        }
+        if (r instanceof Promise) r.catch(onError);
       } catch (e) {
-        handleError(e);
+        onError(e);
       }
     };
 
     next();
   }
 
+  // =======================================
+  // Error Handling Pipeline
+  // =======================================
+
   private handleError(error: any, req: Request, res: Response): void {
     if (this.errorHandlers.length === 0) {
-      console.error('Unhandled error in request:', error);
+      console.error('Unhandled error:', error);
       if (!res.headersSent && !res.isAborted) res.status(500).send('Internal Server Error');
       return;
     }
 
     let i = 0;
+
     const next = (): void => {
       const handler = this.errorHandlers[i++];
       if (!handler) {
@@ -309,17 +360,9 @@ export class Voltrix extends Renderer {
       }
 
       try {
-        const result = handler(error, req, res, next);
-
-        if (result instanceof Promise) {
-          result.then(undefined, next);
-          return;
-        }
-
-        if (res.headersSent || res.isAborted) {
-          return;
-        }
-      } catch (err) {
+        const r = handler(error, req, res, next);
+        if (r instanceof Promise) r.then(undefined, next);
+      } catch {
         next();
       }
     };
@@ -327,79 +370,33 @@ export class Voltrix extends Renderer {
     next();
   }
 
-  private async handleRequest(
-    pattern: string,
-    uwsReq: HttpRequest,
-    uwsRes: HttpResponse,
-    handler: HandlerFunction
-  ) {
-    this.stats.totalRequests++;
-
-    const method = uwsReq.getMethod().toUpperCase();
-    const path = uwsReq.getUrl();
-    const routeKey = { method, path };
-    const cached = this.routeCache.get(routeKey);
-    
-    if (cached) {
-      uwsRes.cork(() => {
-        uwsRes.writeStatus(cached.statusCode.toString());
-        for (const [k, v] of Object.entries(cached.headers)) uwsRes.writeHeader(k, v as string);
-        uwsRes.end(cached.body);
-      });
-      return;
-    }
-
-    const cacheKey = `${method}:${pattern}`;
-    let compiled = this.handlerCache.get(cacheKey);
-
-    if (!compiled) {
-      this.stats.cacheMisses++;
-      compiled = this.compileHandler(handler);
-      this.handlerCache.set(cacheKey, compiled);
-    } else {
-      this.stats.cacheHits++;
-    }
-
-    const req = new Request(uwsReq, pattern);
-    const res = new Response(uwsRes, this);
-
-    try {
-      if (compiled.hasMiddleware) this.executeWithMiddleware(req, res, compiled);
-      else {
-        const result = handler(req, res);
-        if (result && typeof (result as Promise<any>).catch === 'function') {
-          (result as Promise<any>).catch(err => this.handleError(err, req, res));
-        }
-      }
-    } catch (err) {
-      this.handleError(err, req, res);
-    }
-  }
+  // =======================================
+  // 404 Handler
+  // =======================================
 
   private setupNotFoundHandler(): void {
     if (!this.notFoundHandler) return;
+
     this.uws.any('/*', (res, req) => {
-      this.notFoundHandler!(new Request(req, req.getUrl()), new Response(res, this));
+      this.notFoundHandler!(new Request(req, res, req.getUrl()), new Response(res, this));
     });
   }
 
-  // =========================
-  // Server lifecycle / passthrough
-  // =========================
-  listen(port: number, callback?: (sock: us_listen_socket) => void) {
-    return new Promise<us_listen_socket>((resolve, reject) => {
+  // =======================================
+  // Lifecycle
+  // =======================================
+
+  listen(port: number, cb?: (sock: UWS.us_listen_socket) => void) {
+    return new Promise<UWS.us_listen_socket>((resolve, reject) => {
       this.setupNotFoundHandler();
+
       this.uws.listen(port, sock => {
-        if (!sock) {
-          reject(new Error(`Failed to listen on port ${port}`));
-          return;
-        }
+        if (!sock) return reject(new Error(`Failed to listen on port ${port}`));
 
         this.listenSocket = sock;
-        callback?.(sock);
+        if (cb) cb(sock);
         resolve(sock);
       });
-      return this.listenSocket;
     });
   }
 
@@ -413,39 +410,39 @@ export class Voltrix extends Renderer {
     });
   }
 
-  ws(pattern: string, behavior: WebSocketBehavior<any>) {
+  ws(pattern: string, behavior: UWS.WebSocketBehavior<any>) {
     this.uws.ws(pattern, behavior);
     return this;
   }
 
-  // =========================
-  // Caches / Stats
-  // =========================
-  clearAllCaches(): void {
+  // =======================================
+  // Cache / Stats
+  // =======================================
+
+  clearAllCaches() {
     this.handlerCache.clear();
     this.routeCache.clear();
   }
 
-  clearHandlerCache(): void {
+  clearHandlerCache() {
     this.handlerCache.clear();
   }
 
-  clearRouteCache(): void {
+  clearRouteCache() {
     this.routeCache.clear();
   }
 
   getStats() {
-    const r = this.routeCache.getStats();
     return {
       ...this.stats,
-      routeCache: r,
+      routeCache: this.routeCache.getStats(),
       handlerCacheSize: this.handlerCache.size(),
     };
   }
 
-  //////////////////////////
-  /// Statics methods
-  /////////////////////////
+  // =======================================
+  // Static Utilities
+  // =======================================
 
   static setQueryParser(parser: QueryParser) {
     Request.setQueryParser(parser);
@@ -457,6 +454,6 @@ export const voltrix = (opts?: {
   cacheTTL?: number;
   routeCacheSize?: number;
   routeCacheTTL?: number;
-}) => new Voltrix(opts?.cacheSize, opts?.cacheTTL, opts?.routeCacheSize, opts?.routeCacheTTL);
+}) => new Voltrix(opts);
 
 export default voltrix;

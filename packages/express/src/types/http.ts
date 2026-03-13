@@ -3,7 +3,11 @@ export interface IRequest {
   readonly url: string;
   params: Record<string, string>;
   query: Record<string, any>;
-  body: any;
+
+  buffer(): Promise<Uint8Array>;
+  body(): Promise<string>;
+  json<T = any>(): Promise<T>;
+
   header(name: string): string | undefined;
   headers(): Record<string, string>;
   getParam(name: string): string | undefined;
@@ -26,8 +30,6 @@ export interface IResponse {
   header(name: string, value: string): IResponse;
   header(name: string): string | undefined;
   headers(): Record<string, string>;
-
   render(view: string, options?: Record<string, any>, skipLayout?: boolean): void;
-
   close(): void;
 }

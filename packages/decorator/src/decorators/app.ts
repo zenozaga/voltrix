@@ -1,4 +1,4 @@
-import { SYMBOLS } from '../__internal/constants';
+import { SYMBOLS } from '../__internal/symbols.constant';
 import MetadataStore from '../__internal/stores/metadata.store';
 import { ApplicationConfig } from './types';
 

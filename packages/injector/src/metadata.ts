@@ -1,14 +1,14 @@
 import type { Constructor, Token } from './providers';
 
 export const META = {
-  INJECT: Symbol('inject'),
-  INJECTABLE: Symbol('injectable'),
-  INJECT_OPTIONAL: Symbol('inject:optional'),
-  INJECT_TOKENS: Symbol('inject:tokens'),
-  INJECT_PROPS: Symbol('inject:properties'),
-  SCOPE: Symbol('scope'),
-  LIFETIME: Symbol('lifetime'),
-  TIMEOUT: Symbol('timeout'),
+  INJECT: Symbol('__voltrix__inject'),
+  INJECTABLE: Symbol('__voltrix__injectable'),
+  INJECT_OPTIONAL: Symbol('__voltrix__inject:optional'),
+  INJECT_TOKENS: Symbol('__voltrix__inject:tokens'),
+  INJECT_PROPS: Symbol('__voltrix__inject:properties'),
+  SCOPE: Symbol('__voltrix__scope'),
+  LIFETIME: Symbol('__voltrix__lifetime'),
+  TIMEOUT: Symbol('__voltrix__timeout'),
 } as const;
 
 const paramTypesCache: WeakMap<Constructor, any[] | null> = new WeakMap();

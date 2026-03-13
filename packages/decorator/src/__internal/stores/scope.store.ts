@@ -4,7 +4,7 @@
  */
 
 import { setMetadata } from './metadata.store.js';
-import { KEY_SCOPES } from '../constants.js';
+import { KEY_SCOPES } from '../symbols.constant.js';
 
 export interface ScopeDescriptor {
   readonly name: string;

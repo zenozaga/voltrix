@@ -1,4 +1,4 @@
-import { App } from '../packages/express/dist/app.js';
+import { Voltrix as App } from '@voltrix/express';
 
 /**
  * Benchmark específico para comparar el rendimiento de routing
@@ -87,19 +87,22 @@ class RoutingBenchmark {
   }
 
   async startServer(port = 3010) {
-    return new Promise((resolve) => {
-      this.server = this.app.listen(port, '0.0.0.0', () => {
-        console.log(`🚀 Servidor de routing benchmark iniciado en puerto ${port}`);
-        resolve();
+    return new Promise((resolve, reject) => {
+      this.app.listen(port, sock => {
+        if (sock) {
+          this.server = sock;
+          console.log(`🚀 Servidor de routing benchmark iniciado en puerto ${port}`);
+          resolve();
+        } else {
+          reject(new Error(`Failed to listen on port ${port}`));
+        }
       });
     });
   }
 
   async stopServer() {
-    if (this.server) {
-      await new Promise((resolve) => {
-        this.server.close(resolve);
-      });
+    if (this.app) {
+      await this.app.close();
       console.log('🔄 Servidor detenido');
     }
   }
@@ -109,22 +112,30 @@ class RoutingBenchmark {
     console.log(`🎯 URL: ${url}`);
     console.log(`🔢 Requests: ${requests}`);
 
-    const startRequests = this.requestCount;
-    const start = process.hrtime.bigint();
+    const batchSize = 100;
+    const results = [];
     
     // Warmup
-    await fetch(url);
+    await fetch(url).then(res => res.json()).catch(() => {});
     
-    const promises = [];
-    for (let i = 0; i < requests; i++) {
-      promises.push(
-        fetch(url)
-          .then(res => res.json())
-          .catch(() => null)
-      );
+    const start = process.hrtime.bigint();
+    
+    for (let i = 0; i < requests; i += batchSize) {
+      const currentBatchSize = Math.min(batchSize, requests - i);
+      const batchPromises = [];
+      
+      for (let j = 0; j < currentBatchSize; j++) {
+        batchPromises.push(
+          fetch(url)
+            .then(res => (res.ok ? res.json() : null))
+            .catch(() => null)
+        );
+      }
+      
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
     }
-
-    const results = await Promise.all(promises);
+    
     const end = process.hrtime.bigint();
     
     const duration = Number(end - start) / 1_000_000; // ms
@@ -153,47 +164,50 @@ class RoutingBenchmark {
 
     try {
       const results = [];
+      const COUNT = 500;
 
-      // Test rutas estáticas (deberían ser más rápidas con HashMap lookup)
+      // Test rutas estáticas
       console.log('\n🏎️  RUTAS ESTÁTICAS (HashMap O(1)):');
-      results.push(await this.benchmarkRoute('http://localhost:3010/', 2000, 'Ruta root'));
-      results.push(await this.benchmarkRoute('http://localhost:3010/api', 2000, 'Ruta API'));
-      results.push(await this.benchmarkRoute('http://localhost:3010/health', 2000, 'Ruta health'));
-      results.push(await this.benchmarkRoute('http://localhost:3010/status', 2000, 'Ruta status'));
-      results.push(await this.benchmarkRoute('http://localhost:3010/users', 2000, 'Ruta users'));
+      results.push(await this.benchmarkRoute('http://localhost:3010/', COUNT, 'Ruta root'));
+      results.push(await this.benchmarkRoute('http://localhost:3010/api', COUNT, 'Ruta API'));
+      results.push(await this.benchmarkRoute('http://localhost:3010/health', COUNT, 'Ruta health'));
+      results.push(await this.benchmarkRoute('http://localhost:3010/status', COUNT, 'Ruta status'));
+      results.push(await this.benchmarkRoute('http://localhost:3010/users', COUNT, 'Ruta users'));
 
-      // Test rutas dinámicas (deberían beneficiarse de cache LRU)
+      // Test rutas dinámicas
       console.log('\n🔀 RUTAS DINÁMICAS (Cache LRU + Regex):');
-      results.push(await this.benchmarkRoute('http://localhost:3010/users/123', 2000, 'Usuario por ID'));
-      results.push(await this.benchmarkRoute('http://localhost:3010/posts/456/comments/789', 2000, 'Post + Comment'));
-      results.push(await this.benchmarkRoute('http://localhost:3010/api/v1/products/100', 2000, 'API v1 resource'));
-      results.push(await this.benchmarkRoute('http://localhost:3010/files/images/avatars/user.jpg', 2000, 'File path'));
+      results.push(await this.benchmarkRoute('http://localhost:3010/users/123', COUNT, 'Usuario por ID'));
+      results.push(await this.benchmarkRoute('http://localhost:3010/posts/456/comments/789', COUNT, 'Post + Comment'));
+      results.push(await this.benchmarkRoute('http://localhost:3010/api/v1/products/100', COUNT, 'API v1 resource'));
+      results.push(await this.benchmarkRoute('http://localhost:3010/files/images/avatars/user.jpg', COUNT, 'File path'));
 
-      // Test cache benefits - repetir la misma ruta dinámica
-      console.log('\n🎯 BENEFICIO DE CACHE (misma ruta repetida):');
-      results.push(await this.benchmarkRoute('http://localhost:3010/users/123', 3000, 'Usuario (cached)'));
+      // Test cache benefits
+      console.log('\n🎯 BENEFICIO DE CACHE:');
+      results.push(await this.benchmarkRoute('http://localhost:3010/users/123', COUNT, 'Usuario (cached)'));
 
       // Análisis de resultados
       console.log('\n📈 ANÁLISIS DE RESULTADOS:');
       console.log('='.repeat(60));
       
-      const staticRoutes = results.slice(0, 5);
-      const dynamicRoutes = results.slice(5, 9);
-      const cachedRoute = results[9];
+      const staticRoutes = results.filter(r => r.description.includes('Ruta'));
+      const dynamicRoutes = results.filter(r => !r.description.includes('Ruta') && !r.description.includes('cached'));
+      const cachedRoute = results.find(r => r.description.includes('cached'));
 
-      const avgStatic = staticRoutes.reduce((sum, r) => sum + r.rps, 0) / staticRoutes.length;
-      const avgDynamic = dynamicRoutes.reduce((sum, r) => sum + r.rps, 0) / dynamicRoutes.length;
+      const avgStatic = staticRoutes.reduce((sum, r) => sum + r.rps, 0) / (staticRoutes.length || 1);
+      const avgDynamic = dynamicRoutes.reduce((sum, r) => sum + r.rps, 0) / (dynamicRoutes.length || 1);
 
       console.log(`🏎️  Rutas estáticas promedio: ${Math.round(avgStatic).toLocaleString()} req/s`);
       console.log(`🔀 Rutas dinámicas promedio: ${Math.round(avgDynamic).toLocaleString()} req/s`);
-      console.log(`🎯 Ruta cacheada: ${cachedRoute.rps.toLocaleString()} req/s`);
+      if (cachedRoute) console.log(`🎯 Ruta cacheada: ${cachedRoute.rps.toLocaleString()} req/s`);
       
-      const staticVsDynamic = ((avgStatic - avgDynamic) / avgDynamic * 100).toFixed(1);
-      const cacheBoost = ((cachedRoute.rps - avgDynamic) / avgDynamic * 100).toFixed(1);
+      const staticVsDynamic = ((avgStatic - avgDynamic) / (avgDynamic || 1) * 100).toFixed(1);
       
       console.log(`\n📊 COMPARACIÓN:`);
       console.log(`   📈 Rutas estáticas son ${staticVsDynamic}% más rápidas que dinámicas`);
-      console.log(`   🚀 Cache boost: ${cacheBoost}% más rápido en segunda llamada`);
+      if (cachedRoute) {
+        const cacheBoost = ((cachedRoute.rps - avgDynamic) / (avgDynamic || 1) * 100).toFixed(1);
+        console.log(`   🚀 Cache boost: ${cacheBoost}% más rápido en segunda llamada`);
+      }
       
       console.log(`\n🔧 DETALLES TÉCNICOS:`);
       console.log(`   📍 Requests totales procesados: ${this.requestCount.toLocaleString()}`);

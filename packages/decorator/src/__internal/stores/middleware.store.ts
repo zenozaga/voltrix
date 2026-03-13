@@ -4,7 +4,7 @@
  */
 
 import { setMetadata } from './metadata.store.js';
-import { KEY_MIDDLEWARE } from '../constants.js';
+import { KEY_MIDDLEWARE } from '../symbols.constant.js';
 
 export interface MiddlewareDescriptor {
   readonly handler: Function;

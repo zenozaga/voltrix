@@ -1,10 +1,31 @@
 import { join, isAbsolute, extname } from 'path';
 import { readFileSync, existsSync } from 'fs';
 
-export type RenderFunction = (filePath: string, data: Record<string, any>, content?: string) => string | Promise<string>;
-export type BeforeRenderHook = (view: string, data: Record<string, any>) => string | Promise<string> | undefined | null;
-export type AfterRenderHook = (html: string, view: string, data: Record<string, any>) => string | Promise<string>;
-export type RenderErrorHandler = (err: Error, view: string, data: Record<string, any>) => string | Promise<string>;
+/**
+ * Template engine render function
+ */
+export type RenderFunction = (
+  filePath: string,
+  data: Record<string, any>,
+  content?: string
+) => string | Promise<string>;
+
+export type BeforeRenderHook = (
+  view: string,
+  data: Record<string, any>
+) => string | Promise<string> | undefined | null;
+
+export type AfterRenderHook = (
+  html: string,
+  view: string,
+  data: Record<string, any>
+) => string | Promise<string>;
+
+export type RenderErrorHandler = (
+  err: Error,
+  view: string,
+  data: Record<string, any>
+) => string | Promise<string>;
 
 export interface ViewSettings {
   views?: string;
@@ -13,18 +34,28 @@ export interface ViewSettings {
   onError?: RenderErrorHandler;
 }
 
+/**
+ * Lightweight template rendering engine with:
+ * - multi–engine support (.html, .ejs, .hbs…)
+ * - template caching
+ * - hooks (before/after)
+ * - layout system
+ * - custom helpers injection
+ */
 export class Renderer {
   protected viewEngines = new Map<string, RenderFunction>();
   protected viewSettings: Partial<ViewSettings> = {};
+
   protected beforeRenderHook?: BeforeRenderHook;
   protected afterRenderHook?: AfterRenderHook;
 
+  /** caches */
   private pathCache = new Map<string, string>();
   private templateCache = new Map<string, string>();
 
-  // ==========================================
-  // REGISTRATION
-  // ==========================================
+  // ------------------------------------------------------
+  // ENGINE & SETTINGS
+  // ------------------------------------------------------
 
   viewEngine(ext: string, fn: RenderFunction): this {
     if (!ext.startsWith('.')) ext = '.' + ext;
@@ -42,7 +73,8 @@ export class Renderer {
   }
 
   setLayout(layout: string | undefined): this {
-    this.templateCache.set('layout', layout || '');
+    // store layout path, not file content
+    this.viewSettings.layout = layout;
     return this;
   }
 
@@ -64,83 +96,108 @@ export class Renderer {
     return this.viewSettings.layout;
   }
 
-  // ==========================================
+  // ------------------------------------------------------
   // PATH RESOLUTION
-  // ==========================================
+  // ------------------------------------------------------
 
   private resolveViewPath(view: string, defaultExt: string): string {
     const baseDir = this.viewsDir;
     const ext = extname(view) || defaultExt;
-    const key = `${baseDir}:${view}:${ext}`;
+    const cacheKey = `${baseDir}:${view}:${ext}`;
 
-    const cached = this.pathCache.get(key);
+    const cached = this.pathCache.get(cacheKey);
     if (cached) return cached;
 
     const base = isAbsolute(view) ? view : join(baseDir, view);
     let filePath = base.endsWith(ext) ? base : base + ext;
 
     if (!existsSync(filePath)) {
-      const alt = join(base, 'index' + ext);
+      const alt = join(base, `index${ext}`);
       if (existsSync(alt)) filePath = alt;
     }
 
-    this.pathCache.set(key, filePath);
+    this.pathCache.set(cacheKey, filePath);
     return filePath;
   }
 
-  // ==========================================
+  // ------------------------------------------------------
   // TEMPLATE LOADING
-  // ==========================================
+  // ------------------------------------------------------
 
   private loadTemplate(filePath: string): string {
     const cached = this.templateCache.get(filePath);
     if (cached) return cached;
+
     const content = readFileSync(filePath, 'utf8');
     this.templateCache.set(filePath, content);
     return content;
   }
 
-  // ==========================================
-  // MAIN RENDER
-  // ==========================================
+  // ------------------------------------------------------
+  // MAIN RENDER PIPELINE
+  // ------------------------------------------------------
 
-  async viewRenderFile(view: string, data: Record<string, any> = {}, skipLayout = false, currentExt = '.html'): Promise<string> {
+  async viewRenderFile(
+    view: string,
+    data: Record<string, any> = {},
+    skipLayout = false,
+    fallbackExt = '.html'
+  ): Promise<string> {
+    const safeData = { ...data }; // prevent mutation
+
     try {
+      // Before hook
       if (this.beforeRenderHook) {
-        const maybe = await this.beforeRenderHook(view, data);
-        if (typeof maybe === 'string') return maybe;
+        const out = await this.beforeRenderHook(view, safeData);
+        if (typeof out === 'string') return out;
       }
 
-      const fullPath = this.resolveViewPath(view, currentExt);
-      const ext = extname(fullPath) || currentExt;
+      // Resolve file
+      const fullPath = this.resolveViewPath(view, fallbackExt);
+      const ext = extname(fullPath) || fallbackExt;
+
       const engine = this.viewEngines.get(ext);
-      if (!engine) throw new Error(`No engine registered for "${ext}"`);
-
-      if (this.viewSettings.helpers) data.helpers = this.viewSettings.helpers;
-
-      const content = this.loadTemplate(fullPath);
-      let html = await engine(fullPath, data, content);
-
-      if (!skipLayout && this.layout) {
-        const layoutData = { ...data, body: html };
-        html = await this.viewRenderFile(this.layout, layoutData, true, ext);
+      if (!engine) {
+        throw new Error(`No render engine registered for extension "${ext}"`);
       }
 
+      // Inject helpers
+      if (this.viewSettings.helpers) {
+        safeData.helpers = this.viewSettings.helpers;
+      }
+
+      // Render template
+      const template = this.loadTemplate(fullPath);
+      let html = await engine(fullPath, safeData, template);
+
+      // Layout handling
+      if (!skipLayout && this.layout) {
+        html = await this.viewRenderFile(
+          this.layout,
+          { ...safeData, body: html },
+          true,
+          ext
+        );
+      }
+
+      // After hook
       if (this.afterRenderHook) {
-        html = await this.afterRenderHook(html, view, data);
+        html = await this.afterRenderHook(html, view, safeData);
       }
 
       return html;
     } catch (err: any) {
       const onError = this.viewSettings.onError;
-      if (onError) return await onError(err, view, data);
+      if (onError) {
+        return await onError(err, view, safeData);
+      }
       throw err;
     }
   }
 
-  // ==========================================
-  // CACHE CONTROL
-  // ==========================================
+  // ------------------------------------------------------
+  // CACHE MANAGEMENT
+  // ------------------------------------------------------
 
   clearViewCache(): void {
     this.pathCache.clear();

@@ -3,7 +3,8 @@
  * Base helper for creating optimized decorators with WeakMap caching
  */
 
-import { getMetadataStore } from '../stores/metadata.store.js';
+import { getMetadataStore } from "../stores";
+
 
 export interface DecoratorOptions<T = any> {
   type: string | symbol;

@@ -11,7 +11,7 @@ import {
   KEY_ON_REQUEST, 
   KEY_ON_RESPONSE, 
   KEY_ON_ERROR 
-} from '../constants.js';
+} from '../symbols.constant.js';
 
 export type LifecycleHook = 'onInit' | 'onDestroy' | 'onRequest' | 'onResponse' | 'onError';
 
