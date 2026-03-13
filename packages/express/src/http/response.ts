@@ -10,15 +10,42 @@ export class Response implements IResponse {
   private _sent = false;
 
   isAborted = false;
+  onFinished?: () => void;
 
-  constructor(
-    private raw: HttpResponse,
-    private renderer: Renderer
-  ) {
-    raw.onAborted(() => {
+  constructor() {
+    // Initial state set by initialize()
+  }
+
+  /**
+   * Reset instance for reuse in ObjectPool
+   */
+  initialize(raw: HttpResponse, renderer: Renderer, onFinished?: () => void): void {
+    this.raw = raw;
+    this.renderer = renderer;
+    this._headers = {};
+    this._statusCode = 200;
+    this._sent = false;
+    this.isAborted = false;
+    this.onFinished = onFinished;
+
+    this.raw.onAborted(() => {
       this.isAborted = true;
+      if (this.onFinished) {
+        this.onFinished();
+        this.onFinished = undefined;
+      }
     });
   }
+
+  private finished(): void {
+    if (this.onFinished) {
+      this.onFinished();
+      this.onFinished = undefined;
+    }
+  }
+
+  private raw!: HttpResponse;
+  private renderer!: Renderer;
 
   // ============================================
   // BASIC PROPERTIES
@@ -98,6 +125,8 @@ export class Response implements IResponse {
     if (this._sent || this.isAborted) return;
     this._sent = true;
 
+    // Body is ALREADY normalized by send() or json() callers in many cases
+    // but we normalize here to be sure, then use it directly in end()
     const payload = normalizeBodyForUWS(body);
 
     this.raw.cork(() => {
@@ -111,6 +140,7 @@ export class Response implements IResponse {
       }
 
       this.raw.end(payload);
+      this.finished();
     });
   }
 
@@ -159,6 +189,7 @@ export class Response implements IResponse {
         this.raw.writeHeader('Content-Type', 'text/html; charset=utf-8');
         this.raw.writeHeader('Content-Length', len.toString());
         this.raw.end(html);
+        this.finished();
       });
     } catch (err: any) {
       const onError = this.renderer.viewGet('onError');
@@ -178,6 +209,7 @@ export class Response implements IResponse {
           this.raw.writeStatus('500 Internal Server Error');
           this.raw.writeHeader('Content-Type', 'text/html; charset=utf-8');
           this.raw.end(output);
+          this.finished();
         });
       }
     }
@@ -189,7 +221,10 @@ export class Response implements IResponse {
   close(): void {
     if (!this._sent && !this.isAborted) {
       this._sent = true;
-      this.raw.cork(() => this.raw.end());
+      this.raw.cork(() => {
+        this.raw.end();
+        this.finished();
+      });
     }
   }
 }

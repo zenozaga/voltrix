@@ -15,14 +15,32 @@ export class Request implements IRequest {
   private routePattern?: string;
   private cachedQuery?: Record<string, any>;
   private cachedParams?: Record<string, string>;
+  private paramIndices?: Map<string, number>;
 
-  constructor(
-    private request: HttpRequest,
-    private response: HttpResponse,
-    pattern?: string
-  ) {
-    if (pattern) this.routePattern = pattern;
+  constructor() {
+    // Initial state will be set by initialize()
   }
+
+  /**
+   * Reset instance for reuse in ObjectPool
+   */
+  initialize(request: HttpRequest, response: HttpResponse, pattern?: string, paramIndices?: Map<string, number>): void {
+    this.request = request;
+    this.response = response;
+    this.routePattern = pattern;
+    this.paramIndices = paramIndices;
+
+    this.cachedBuffer = undefined;
+    this.cachedBody = undefined;
+    this.cachedJSON = undefined;
+    this.detectedJSON = null;
+    this.checkedJSON = false;
+    this.cachedQuery = undefined;
+    this.cachedParams = undefined;
+  }
+
+  private request!: HttpRequest;
+  private response!: HttpResponse;
 
   // ================================================================
   // BUFFER → BODY → JSON  (High-performance implementation)
@@ -141,6 +159,13 @@ export class Request implements IRequest {
   }
 
   getParam(name: string): string | undefined {
+    // FAST PATH: Use native uWS parameter by index if available
+    if (this.paramIndices) {
+      const index = this.paramIndices.get(name);
+      if (index !== undefined) return this.request.getParameter(index);
+    }
+    
+    // Fallback to JS parsing (for non-precomputed routes)
     return this.params[name];
   }
 

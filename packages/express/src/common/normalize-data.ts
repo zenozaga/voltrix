@@ -1,29 +1,29 @@
 export type BodyInput = string | ArrayBuffer | SharedArrayBuffer | Buffer | ArrayBufferView;
 
-export function normalizeBodyForUWS(body: BodyInput): string | ArrayBuffer {
+export type BodyOutput = string | ArrayBuffer | Uint8Array;
+
+export function normalizeBodyForUWS(body: BodyInput): BodyOutput {
   // FAST PATH: strings → no tocar
   if (typeof body === 'string') {
     return body;
   }
 
-  // Buffer → ArrayBuffer slice (zero-copy view)
-  if (body instanceof Buffer) {
-    return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer;
+  // FAST PATH: Buffer / Uint8Array (already zero-copy views or valid)
+  if (body instanceof Uint8Array || body instanceof Buffer) {
+    return body;
   }
 
   // SharedArrayBuffer → MUST convert (uWS does NOT accept SAB)
   if (body instanceof SharedArrayBuffer) {
-    const tmp = new Uint8Array(body);
-    return tmp.slice().buffer as ArrayBuffer;
+    return new Uint8Array(body).slice();
   }
 
-  // ArrayBuffer → already valid
+  // ArrayBuffer → valid
   if (body instanceof ArrayBuffer) {
     return body;
   }
 
-  // ArrayBufferView (Uint8Array, DataView, TypedArrays…)
-  // MUST copy because .buffer may be SAB or oversized
-  const view = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
-  return view.slice().buffer as ArrayBuffer;
+  // ArrayBufferView (DataView, TypedArrays…)
+  // Return a Uint8Array view of the same memory
+  return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
 }

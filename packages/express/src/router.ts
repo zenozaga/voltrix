@@ -168,6 +168,7 @@ export class Router {
       middlewares: Middleware[];
       allMiddlewares: Middleware[];
       errorHandlers: ErrorMiddleware[];
+      paramIndices: Map<string, number>;
     }> = [];
 
     const inheritedMws = this.middlewares;
@@ -177,9 +178,12 @@ export class Router {
     for (let i = 0; i < this.routes.length; i++) {
       const r = this.routes[i];
       if (!r || r.method === 'MIDDLEWARE') continue;
+      
+      const fullPattern = this.joinPaths(fullPrefix, r.pattern);
+      
       results.push({
         method: r.method,
-        fullPattern: this.joinPaths(fullPrefix, r.pattern),
+        fullPattern,
         handler: r.handler,
         middlewares: r.middlewares,
         allMiddlewares:
@@ -187,6 +191,7 @@ export class Router {
             ? [...inheritedMws, ...(r.middlewares.length ? r.middlewares : [])]
             : r.middlewares,
         errorHandlers: inheritedErrs,
+        paramIndices: this.computeParamIndices(fullPattern),
       });
     }
 
@@ -207,6 +212,21 @@ export class Router {
     }
 
     return results;
+  }
+
+  private computeParamIndices(pattern: string): Map<string, number> {
+    const indices = new Map<string, number>();
+    const segments = pattern.split('/');
+    let paramCount = 0;
+
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      if (seg && seg.startsWith(':')) {
+        indices.set(seg.slice(1), paramCount++);
+      }
+    }
+
+    return indices;
   }
 
   // ========================================

@@ -8,6 +8,7 @@ import { RouteLRUCache } from './common/route-cache.js';
 import { Renderer } from './renderer.js';
 import { Response } from './http/response.js';
 import { QueryParser, Request } from './http/request.js';
+import { ObjectPool } from './common/object-pool.js';
 
 interface CompiledHandler {
   middlewares: Handlers.Middleware[];
@@ -54,12 +55,19 @@ export class Voltrix extends Renderer {
     totalRequests: 0,
   };
 
+  private readonly requestPool: ObjectPool<Request>;
+  private readonly responsePool: ObjectPool<Response>;
+
   constructor(options?: VoltrixOptions) {
     super();
 
     this.uws = UWS.App();
     this.handlerCache = new LRUCache(options?.cacheSize, options?.cacheTTL);
     this.routeCache = new RouteLRUCache(options?.routeCacheSize, options?.routeCacheTTL);
+
+    // Initialize pools
+    this.requestPool = new ObjectPool(() => new Request(), 1000);
+    this.responsePool = new ObjectPool(() => new Response(), 1000);
   }
 
   // =======================================
@@ -155,11 +163,19 @@ export class Voltrix extends Renderer {
 
     // HTTP routes
     for (const r of routes) {
-      const { method, fullPattern, handler, allMiddlewares, errorHandlers } = r;
+      const { method, fullPattern, handler, allMiddlewares, errorHandlers, paramIndices } = r;
 
       const compiled = (res: UWS.HttpResponse, req: UWS.HttpRequest) => {
-        const vreq = new Request(req, res, fullPattern);
-        const vres = new Response(res, this);
+        const vreq = this.requestPool.acquire();
+        const vres = this.responsePool.acquire();
+        
+        const cleanup = () => {
+          this.requestPool.release(vreq);
+          this.responsePool.release(vres);
+        };
+
+        vreq.initialize(req, res, fullPattern, paramIndices);
+        vres.initialize(res, this, cleanup);
 
         const chain = this.globalMiddlewares.length
           ? [...this.globalMiddlewares, ...allMiddlewares]
@@ -168,7 +184,11 @@ export class Voltrix extends Renderer {
         if (chain.length === 0) {
           try {
             const out = handler(vreq, vres);
-            if (out instanceof Promise) out.catch(err => this.handleError(err, vreq, vres));
+            if (out instanceof Promise) {
+              out.catch(err => {
+                this.handleError(err, vreq, vres);
+              });
+            }
           } catch (e) {
             this.handleError(e, vreq, vres);
           }
@@ -206,12 +226,18 @@ export class Voltrix extends Renderer {
     let i = 0;
 
     const onError = (err: any) => {
-      if (errs.length === 0) return this.handleError(err, req, res);
+      if (errs.length === 0) {
+        this.handleError(err, req, res);
+        return;
+      }
 
       let ei = 0;
       const nextErr = (): void => {
         const fn = errs[ei++];
-        if (!fn) return this.handleError(err, req, res);
+        if (!fn) {
+          this.handleError(err, req, res);
+          return;
+        }
 
         try {
           fn(err, req, res, nextErr);
@@ -227,7 +253,9 @@ export class Voltrix extends Renderer {
       if (i >= mws.length) {
         try {
           const r = handler(req, res);
-          if (r instanceof Promise) r.catch(onError);
+          if (r instanceof Promise) {
+            r.catch(onError);
+          }
         } catch (e) {
           onError(e);
         }
@@ -258,7 +286,7 @@ export class Voltrix extends Renderer {
     };
   }
 
-  private async handleRequest(
+  private handleRequest(
     pattern: string,
     uwsReq: UWS.HttpRequest,
     uwsRes: UWS.HttpResponse,
@@ -269,6 +297,7 @@ export class Voltrix extends Renderer {
     const method = uwsReq.getMethod().toUpperCase();
     const path = uwsReq.getUrl();
 
+    // Cache lookup
     const cached = this.routeCache.get({ method, path });
     if (cached) {
       uwsRes.cork(() => {
@@ -292,15 +321,27 @@ export class Voltrix extends Renderer {
       this.stats.cacheHits++;
     }
 
-    const req = new Request(uwsReq, uwsRes, pattern);
-    const res = new Response(uwsRes, this);
+    const req = this.requestPool.acquire();
+    const res = this.responsePool.acquire();
+
+    const cleanup = () => {
+      this.requestPool.release(req);
+      this.responsePool.release(res);
+    };
+
+    req.initialize(uwsReq, uwsRes, pattern);
+    res.initialize(uwsRes, this, cleanup);
 
     try {
       if (compiled.hasMiddleware) {
         this.executeWithMiddleware(req, res, compiled);
       } else {
         const out = handler(req, res);
-        if (out instanceof Promise) out.catch(err => this.handleError(err, req, res));
+        if (out instanceof Promise) {
+          out.catch(err => {
+            this.handleError(err, req, res);
+          });
+        }
       }
     } catch (e) {
       this.handleError(e, req, res);
@@ -311,7 +352,9 @@ export class Voltrix extends Renderer {
     const { middlewares, handler } = compiled;
     let i = 0;
 
-    const onError = (err: any) => this.handleError(err, req, res);
+    const onError = (err: any) => {
+      this.handleError(err, req, res);
+    };
 
     const next = (err?: any): void => {
       if (err) return onError(err);
@@ -319,7 +362,9 @@ export class Voltrix extends Renderer {
       if (i >= middlewares.length) {
         try {
           const r = handler(req, res);
-          if (r instanceof Promise) r.catch(onError);
+          if (r instanceof Promise) {
+            r.catch(onError);
+          }
         } catch (e) {
           onError(e);
         }
@@ -378,7 +423,25 @@ export class Voltrix extends Renderer {
     if (!this.notFoundHandler) return;
 
     this.uws.any('/*', (res, req) => {
-      this.notFoundHandler!(new Request(req, res, req.getUrl()), new Response(res, this));
+      const vreq = this.requestPool.acquire();
+      const vres = this.responsePool.acquire();
+      
+      const cleanup = () => {
+        this.requestPool.release(vreq);
+        this.responsePool.release(vres);
+      };
+
+      vreq.initialize(req, res, req.getUrl());
+      vres.initialize(res, this, cleanup);
+
+      try {
+        const out = this.notFoundHandler!(vreq, vres);
+        if (out instanceof Promise) {
+          out.catch(err => this.handleError(err, vreq, vres));
+        }
+      } catch (e) {
+        this.handleError(e, vreq, vres);
+      }
     });
   }
 
