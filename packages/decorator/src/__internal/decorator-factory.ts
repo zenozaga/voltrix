@@ -1,3 +1,4 @@
+import { META } from '@voltrix/injector';
 import { MetadataRegistry, Constructor } from './metadata-registry.js';
 
 /**
@@ -42,6 +43,10 @@ export const DecoratorFactory = {
         case 'controller':
           bag.type = config.type;
           bag.options = { ...bag.options, ...config.value };
+          
+          // 💉 Automatically mark as Injectable for the DI Container
+          // This ensures constructor dependencies are discoverable
+          Reflect.defineMetadata(META.INJECTABLE, true, ctor);
           break;
 
         case 'route':
@@ -72,7 +77,10 @@ export const DecoratorFactory = {
 
         case 'custom':
           if (!config.key) throw new Error('Custom decorators must provide a unique key.');
-          bag.custom.set(config.key, config.value);
+          const customKey = propertyKey || '@@global';
+          const customMap = bag.custom.get(customKey) || new Map();
+          customMap.set(config.key, config.value);
+          bag.custom.set(customKey, customMap);
           break;
       }
     };

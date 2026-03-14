@@ -1,3 +1,5 @@
+import 'reflect-metadata';
+
 /**
  * Ultra-fast Voltrix Decorator System
  * Optimized for maximum performance with minimal overhead

@@ -471,6 +471,25 @@ export class DIContainer {
     return instance;
   }
 
+  /**
+   * Get all active instances in the container.
+   */
+  getInstances(): unknown[] {
+    return Array.from(this.instances.values()).map(rec => rec.value);
+  }
+
+  /**
+   * Alias for register (for compatibility).
+   */
+  addProvider<T>(provider: any): void {
+    if (!provider) return;
+    if (typeof provider === 'function') {
+      this.register({ token: provider, useClass: provider });
+    } else {
+      this.register(provider);
+    }
+  }
+
   count(): number {
     return this.providers.size;
   }
