@@ -5,4 +5,5 @@ export * from './http/index.js';
 
 export { Router, createRouter } from './router.js';
 export { Voltrix, voltrix } from './voltrix.js';
+export { staticMiddleware as static } from './common/static.js';
 export { voltrix as default } from './voltrix.js';

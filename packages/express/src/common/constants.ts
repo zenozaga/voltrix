@@ -42,7 +42,7 @@ export const STATUS_TEXT = {
 export type StatusCode = keyof typeof STATUS_TEXT;
 
 export const STATUS_LINES: Record<number, string> = Object.fromEntries(
-  Object.entries(STATUS_TEXT).map(([code, text]) => [code, `${code} ${text}`])
+  Object.entries(STATUS_TEXT).map(([code, text]) => [Number(code), `${code} ${text}`])
 );
 
 // ==========================================================

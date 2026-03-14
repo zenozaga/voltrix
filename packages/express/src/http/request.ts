@@ -1,5 +1,6 @@
 import type { HttpRequest, HttpResponse } from 'uWebSockets.js';
 import { IRequest } from '../types/http.js';
+import { parseMultipart, MultipartPart } from '../common/multipart.js';
 
 export type QueryParser = (queryString: string) => Record<string, any>;
 export type ParamsParser = (pattern: string, url: string) => Record<string, string>;
@@ -189,6 +190,23 @@ export class Request implements IRequest {
     const result: Record<string, string> = {};
     this.request.forEach((k, v) => (result[k] = v));
     return result;
+  }
+
+  onData(handler: (chunk: Uint8Array, isLast: boolean) => void): void {
+    if (this.cachedBuffer) {
+      handler(this.cachedBuffer, true);
+      return;
+    }
+
+    this.response.onData((ab, isLast) => {
+      // Create a Uint8Array view of the ArrayBuffer
+      // IMPORTANT: ab is only valid during the execution of this callback
+      handler(new Uint8Array(ab), isLast);
+    });
+  }
+
+  async parseMultipart(onPart: (part: MultipartPart) => void | Promise<void>): Promise<void> {
+    return parseMultipart(this, onPart);
   }
 
   // ================================================================

@@ -7,11 +7,15 @@ export interface IRequest {
   buffer(): Promise<Uint8Array>;
   body(): Promise<string>;
   json<T = any>(): Promise<T>;
+  onData(handler: (chunk: Uint8Array, isLast: boolean) => void): void;
 
   header(name: string): string | undefined;
   headers(): Record<string, string>;
   getParam(name: string): string | undefined;
   getQuery(name: string): any;
+  
+  // High-level multipart helper
+  parseMultipart(onPart: (part: any) => void | Promise<void>): Promise<void>;
 }
 
 export interface IResponse {
@@ -25,10 +29,12 @@ export interface IResponse {
   end(data?: string | Uint8Array): void;
   redirect(url: string, status?: number): void;
   sendBuffer(data: ArrayBuffer | Buffer): void;
+  sendFile(path: string): Promise<void>;
 
   // Header methods
   header(name: string, value: string): IResponse;
   header(name: string): string | undefined;
+  setHeader(name: string, value: string): IResponse;
   headers(): Record<string, string>;
   render(view: string, options?: Record<string, any>, skipLayout?: boolean): void;
   close(): void;

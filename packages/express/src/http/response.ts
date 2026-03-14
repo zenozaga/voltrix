@@ -1,12 +1,14 @@
 import type { HttpResponse } from 'uWebSockets.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { IResponse } from '../types/http.js';
 import { Renderer } from '../renderer.js';
 import { STATUS_TEXT, StatusCode, STATUS_LINES } from '../common/constants.js';
 import { normalizeBodyForUWS, BodyInput } from '../common/normalize-data.js';
 
 export class Response implements IResponse {
-  private _headers: Record<string, string> = {};
-  private _headerNames: string[] = [];
+  public _headers: Record<string, string> = {};
+  public _headerNames: string[] = [];
   private _statusCode = 200;
   private _sent = false;
 
@@ -86,7 +88,31 @@ export class Response implements IResponse {
   }
 
   type(contentType: string): this {
-    return this.header('Content-Type', contentType);
+    return this.setHeader('Content-Type', contentType);
+  }
+
+  setHeader(name: string, value: string): this {
+    const lower = name.toLowerCase();
+    // console.log(`SETTING HEADER: ${name} = ${value}`);
+    
+    // Check if we already have this header (case-insensitive)
+    let found = false;
+    for (let i = 0; i < this._headerNames.length; i++) {
+        const existingName = this._headerNames[i];
+        if (existingName.toLowerCase() === lower) {
+            // Update the existing value
+            this._headers[existingName] = value;
+            found = true;
+            break;
+        }
+    }
+    
+    if (!found) {
+        this._headerNames.push(name);
+        this._headers[name] = value;
+    }
+    
+    return this;
   }
 
   // ============================================
@@ -96,7 +122,7 @@ export class Response implements IResponse {
     if (this._sent || this.isAborted) return;
 
     const body = JSON.stringify(data);
-    this.header('Content-Type', 'application/json; charset=utf-8');
+    this.setHeader('Content-Type', 'application/json; charset=utf-8');
 
     this._sendInternal(body);
   }
@@ -109,7 +135,7 @@ export class Response implements IResponse {
 
     const normalized = normalizeBodyForUWS(data);
 
-    this.header('Content-Type', 'application/octet-stream');
+    this.setHeader('Content-Type', 'application/octet-stream');
     this._sendInternal(normalized);
   }
 
@@ -119,8 +145,7 @@ export class Response implements IResponse {
   send(data: string | Buffer): void {
     if (this._sent || this.isAborted) return;
 
-    const normalized = normalizeBodyForUWS(data);
-    this._sendInternal(normalized);
+    this._sendInternal(data);
   }
 
   // ============================================
@@ -131,16 +156,21 @@ export class Response implements IResponse {
     this._sent = true;
 
     const payload = normalizeBodyForUWS(body);
+    const contentLength = typeof payload === 'string' ? Buffer.byteLength(payload) : payload.byteLength;
 
     this.raw.cork(() => {
-      const statusLine = STATUS_LINES[this._statusCode] || String(this._statusCode);
+      const statusLine = STATUS_LINES[this._statusCode] || `${this._statusCode} ${STATUS_TEXT[this._statusCode as StatusCode] || 'Unknown'}`;
       this.raw.writeStatus(statusLine);
+
+      // Ensure standard headers are present if not already set
+      if (!this.header('Content-Type')) {
+        this.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      }
 
       const names = this._headerNames;
       const headers = this._headers;
       for (let i = 0; i < names.length; i++) {
-        const name = names[i];
-        this.raw.writeHeader(name, headers[name]);
+        this.raw.writeHeader(names[i], headers[names[i]]);
       }
 
       this.raw.end(payload);
@@ -217,6 +247,127 @@ export class Response implements IResponse {
         });
       }
     }
+  }
+
+  // ============================================
+  // SEND FILE (optimized with backpressure)
+  // ============================================
+  async sendFile(filePath: string): Promise<void> {
+    if (this._sent || this.isAborted) return;
+    this._sent = true;
+
+    return new Promise((resolve, reject) => {
+      fs.stat(filePath, (err, stats) => {
+        if (err || !stats.isFile()) {
+            this._sent = false; // Reset sent to allow error handling
+            return reject(err || new Error('Not a file'));
+        }
+
+        const size = stats.size;
+        const contentType = this.getContentType(filePath);
+        
+        this.raw.cork(() => {
+          this.raw.writeStatus(STATUS_LINES[200]);
+          
+          // Clear any conflicting headers set before
+          this.setHeader('Content-Type', contentType);
+
+          const names = this._headerNames;
+          const headers = this._headers;
+          for (let i = 0; i < names.length; i++) {
+            const name = names[i];
+            if (name.toLowerCase() === 'content-length') continue;
+            this.raw.writeHeader(name, headers[name]);
+          }
+        });
+
+        // Setup streaming
+        const fd = fs.openSync(filePath, 'r');
+        let offset = 0;
+        const buffer = Buffer.alloc(64 * 1024); // 64KB chunks
+
+        const streamChunk = () => {
+          if (this.isAborted) {
+            fs.closeSync(fd);
+            this.finished();
+            return;
+          }
+
+          const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, offset);
+          if (bytesRead === 0) {
+            fs.closeSync(fd);
+            this.raw.end();
+            this.finished();
+            resolve();
+            return;
+          }
+
+          const chunk = buffer.subarray(0, bytesRead);
+          const isLast = offset + bytesRead >= size;
+          
+          let ok = false;
+          this.raw.cork(() => {
+            if (isLast) {
+              this.raw.end(chunk);
+              ok = true;
+            } else {
+              ok = this.raw.tryEnd(chunk, size)[0];
+            }
+          });
+
+          if (isLast) {
+            fs.closeSync(fd);
+            this.finished();
+            resolve();
+            return;
+          }
+
+          if (ok) {
+            offset += bytesRead;
+            // Immediate next chunk if it fits in buffer
+            process.nextTick(streamChunk);
+          } else {
+            // Wait for writability
+            this.raw.onWritable((newOffset) => {
+              offset = newOffset;
+              streamChunk();
+              return true;
+            });
+          }
+        };
+
+        this.raw.onAborted(() => {
+          this.isAborted = true;
+          fs.closeSync(fd);
+          this.finished();
+          reject(new Error('Aborted'));
+        });
+
+        streamChunk();
+      });
+    });
+  }
+
+  private getContentType(filename: string): string {
+    const ext = path.extname(filename).toLowerCase();
+    const map: Record<string, string> = {
+      '.html': 'text/html',
+      '.js': 'text/javascript',
+      '.css': 'text/css',
+      '.json': 'application/json',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.svg': 'image/svg+xml',
+      '.wav': 'audio/wav',
+      '.mp4': 'video/mp4',
+      '.woff': 'application/font-woff',
+      '.ttf': 'application/font-ttf',
+      '.eot': 'application/vnd.ms-fontobject',
+      '.otf': 'application/font-otf',
+      '.wasm': 'application/wasm',
+    };
+    return map[ext] || 'application/octet-stream';
   }
 
   // ============================================

@@ -119,36 +119,8 @@ export class Voltrix extends Renderer {
   // =======================================
 
   private register(method: string, pattern: string, handler: Handlers.HandlerFunction): this {
-    const hasGlobalMws = this.globalMiddlewares.length > 0;
-    
     const compiled = (res: UWS.HttpResponse, req: UWS.HttpRequest) => {
-      const url = req.getUrl();
-      const methodStr = req.getMethod().toUpperCase();
-
-      const vreq = this.requestPool.acquire();
-      const vres = this.responsePool.acquire();
-      
-      const cleanup = () => {
-        this.requestPool.release(vreq);
-        this.responsePool.release(vres);
-      };
-
-      vreq.initialize(req, res, pattern, undefined, methodStr, url);
-      vres.initialize(res, this, cleanup);
-
-      if (!hasGlobalMws) {
-        try {
-          const out = handler(vreq, vres);
-          if (out instanceof Promise) {
-            out.catch(err => this.handleError(err, vreq, vres));
-          }
-        } catch (e) {
-          this.handleError(e, vreq, vres);
-        }
-        return;
-      }
-
-      this.executeRouterMiddlewareChain(vreq, vres, handler, this.globalMiddlewares, this.errorHandlers);
+      this.handleRequest(pattern, req, res, handler, undefined, true);
     };
 
     (this.uws as any)[method](pattern, compiled);
@@ -201,32 +173,7 @@ export class Voltrix extends Renderer {
           : null;
 
       const compiled = (res: UWS.HttpResponse, req: UWS.HttpRequest) => {
-        const vreq = this.requestPool.acquire();
-        const vres = this.responsePool.acquire();
-        
-        const cleanup = () => {
-          this.requestPool.release(vreq);
-          this.responsePool.release(vres);
-        };
-
-        vreq.initialize(req, res, fullPattern, paramIndices);
-        vres.initialize(res, this, cleanup);
-
-        if (!chain) {
-          try {
-            const out = handler(vreq, vres);
-            if (out instanceof Promise) {
-              out.catch(err => {
-                this.handleError(err, vreq, vres);
-              });
-            }
-          } catch (e) {
-            this.handleError(e, vreq, vres);
-          }
-          return;
-        }
-
-        this.executeRouterMiddlewareChain(vreq, vres, handler, chain, errorHandlers);
+        this.handleRequest(fullPattern, req, res, handler, { chain, errorHandlers, paramIndices });
       };
 
       (this.uws as any)[method.toLowerCase()](fullPattern, compiled);
@@ -309,107 +256,63 @@ export class Voltrix extends Renderer {
   // Request Execution Path
   // =======================================
 
-  private compileHandler(handler: Handlers.HandlerFunction): CompiledHandler {
-    return {
-      middlewares: this.globalMiddlewares.length ? [...this.globalMiddlewares] : [],
-      handler,
-      hasMiddleware: this.hasGlobalMiddleware,
-    };
-  }
+
 
   private handleRequest(
     pattern: string,
     uwsReq: UWS.HttpRequest,
     uwsRes: UWS.HttpResponse,
-    handler: Handlers.HandlerFunction
+    handler: Handlers.HandlerFunction,
+    routerConfig?: { chain: Handlers.Middleware[] | null; errorHandlers: Handlers.ErrorMiddleware[]; paramIndices?: Map<string, number> },
+    isDirect?: boolean
   ) {
     this.stats.totalRequests++;
 
     const method = uwsReq.getMethod().toUpperCase();
     const path = uwsReq.getUrl();
 
-    // Cache lookup
-    const cached = this.routeCache.get({ method, path });
-    if (cached) {
-      uwsRes.cork(() => {
-        uwsRes.writeStatus(String(cached.statusCode));
-        for (const [k, v] of Object.entries(cached.headers)) {
-          uwsRes.writeHeader(k, v as string);
-        }
-        uwsRes.end(cached.body);
-      });
-      return;
-    }
-
-    const key = method + pattern; // Faster than template string
-    let compiled = this.handlerCache.get(key);
-
-    if (!compiled) {
-      this.stats.cacheMisses++;
-      compiled = this.compileHandler(handler);
-      this.handlerCache.set(key, compiled);
-    } else {
-      this.stats.cacheHits++;
+    // Cache lookup (only for direct/standard routes for now)
+    if (isDirect) {
+      const cached = this.routeCache.get({ method, path });
+      if (cached) {
+        uwsRes.cork(() => {
+          uwsRes.writeStatus(String(cached.statusCode));
+          for (const [k, v] of Object.entries(cached.headers)) {
+            uwsRes.writeHeader(k, v as string);
+          }
+          uwsRes.end(cached.body);
+        });
+        return;
+      }
     }
 
     const req = this.requestPool.acquire();
     const res = this.responsePool.acquire();
 
-    req.initialize(uwsReq, uwsRes, pattern, undefined, method, path);
+    req.initialize(uwsReq, uwsRes, pattern, routerConfig?.paramIndices, method, path);
     res.initialize(uwsRes, this, () => {
       this.requestPool.release(req);
       this.responsePool.release(res);
     });
 
+    if (routerConfig?.chain) {
+      this.executeRouterMiddlewareChain(req, res, handler, routerConfig.chain, routerConfig.errorHandlers);
+      return;
+    }
+
+    if (isDirect && this.hasGlobalMiddleware) {
+      this.executeRouterMiddlewareChain(req, res, handler, this.globalMiddlewares, this.errorHandlers);
+      return;
+    }
+
     try {
-      if (compiled.hasMiddleware) {
-        this.executeWithMiddleware(req, res, compiled);
-      } else {
-        const out = handler(req, res);
-        if (out instanceof Promise) {
-          out.catch(err => {
-            this.handleError(err, req, res);
-          });
-        }
+      const out = handler(req, res);
+      if (out instanceof Promise) {
+        out.catch(err => this.handleError(err, req, res));
       }
     } catch (e) {
       this.handleError(e, req, res);
     }
-  }
-
-  private executeWithMiddleware(req: Request, res: Response, compiled: CompiledHandler) {
-    const { middlewares, handler } = compiled;
-    let i = 0;
-
-    const onError = (err: any) => {
-      this.handleError(err, req, res);
-    };
-
-    const next = (err?: any): void => {
-      if (err) return onError(err);
-
-      if (i >= middlewares.length) {
-        try {
-          const r = handler(req, res);
-          if (r instanceof Promise) {
-            r.catch(onError);
-          }
-        } catch (e) {
-          onError(e);
-        }
-        return;
-      }
-
-      const mw = middlewares[i++];
-      try {
-        const r = mw(req, res, next);
-        if (r instanceof Promise) r.catch(onError);
-      } catch (e) {
-        onError(e);
-      }
-    };
-
-    next();
   }
 
   // =======================================
@@ -417,9 +320,11 @@ export class Voltrix extends Renderer {
   // =======================================
 
   private handleError(error: any, req: Request, res: Response): void {
+    if (res.isAborted) return;
+
     if (this.errorHandlers.length === 0) {
       console.error('Unhandled error:', error);
-      if (!res.headersSent && !res.isAborted) res.status(500).send('Internal Server Error');
+      if (!res.headersSent) res.status(500).send('Internal Server Error');
       return;
     }
 
@@ -428,7 +333,7 @@ export class Voltrix extends Renderer {
     const next = (): void => {
       const handler = this.errorHandlers[i++];
       if (!handler) {
-        if (!res.headersSent && !res.isAborted)
+        if (!res.headersSent)
           res.status(500).json({ error: 'Internal Server Error' });
         return;
       }
@@ -452,25 +357,7 @@ export class Voltrix extends Renderer {
     if (!this.notFoundHandler) return;
 
     this.uws.any('/*', (res, req) => {
-      const vreq = this.requestPool.acquire();
-      const vres = this.responsePool.acquire();
-      
-      const cleanup = () => {
-        this.requestPool.release(vreq);
-        this.responsePool.release(vres);
-      };
-
-      vreq.initialize(req, res, req.getUrl());
-      vres.initialize(res, this, cleanup);
-
-      try {
-        const out = this.notFoundHandler!(vreq, vres);
-        if (out instanceof Promise) {
-          out.catch(err => this.handleError(err, vreq, vres));
-        }
-      } catch (e) {
-        this.handleError(e, vreq, vres);
-      }
+      this.handleRequest('/*', req, res, this.notFoundHandler!, undefined, true);
     });
   }
 
@@ -482,7 +369,7 @@ export class Voltrix extends Renderer {
     return new Promise<UWS.us_listen_socket>((resolve, reject) => {
       this.setupNotFoundHandler();
 
-      this.uws.listen(port, sock => {
+      this.uws.listen('127.0.0.1', port, sock => {
         if (!sock) return reject(new Error(`Failed to listen on port ${port}`));
 
         this.listenSocket = sock;
