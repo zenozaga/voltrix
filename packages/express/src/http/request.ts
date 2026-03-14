@@ -16,6 +16,8 @@ export class Request implements IRequest {
   private cachedQuery?: Record<string, any>;
   private cachedParams?: Record<string, string>;
   private paramIndices?: Map<string, number>;
+  private _method?: string;
+  private _url?: string;
 
   constructor() {
     // Initial state will be set by initialize()
@@ -24,11 +26,21 @@ export class Request implements IRequest {
   /**
    * Reset instance for reuse in ObjectPool
    */
-  initialize(request: HttpRequest, response: HttpResponse, pattern?: string, paramIndices?: Map<string, number>): void {
+  initialize(
+    request: HttpRequest, 
+    response: HttpResponse, 
+    pattern?: string, 
+    paramIndices?: Map<string, number>,
+    method?: string,
+    url?: string
+  ): void {
     this.request = request;
     this.response = response;
     this.routePattern = pattern;
     this.paramIndices = paramIndices;
+    
+    this._method = method;
+    this._url = url;
 
     this.cachedBuffer = undefined;
     this.cachedBody = undefined;
@@ -131,11 +143,11 @@ export class Request implements IRequest {
   }
 
   get method(): string {
-    return this.request.getMethod().toUpperCase();
+    return this._method ||= this.request.getMethod().toUpperCase();
   }
 
   get url(): string {
-    return this.request.getUrl();
+    return this._url ||= this.request.getUrl();
   }
 
   get query(): Record<string, any> {

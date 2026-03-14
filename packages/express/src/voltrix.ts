@@ -119,9 +119,39 @@ export class Voltrix extends Renderer {
   // =======================================
 
   private register(method: string, pattern: string, handler: Handlers.HandlerFunction): this {
-    (this.uws as any)[method](pattern, (res: UWS.HttpResponse, req: UWS.HttpRequest) =>
-      this.handleRequest(pattern, req, res, handler)
-    );
+    const hasGlobalMws = this.globalMiddlewares.length > 0;
+    
+    const compiled = (res: UWS.HttpResponse, req: UWS.HttpRequest) => {
+      const url = req.getUrl();
+      const methodStr = req.getMethod().toUpperCase();
+
+      const vreq = this.requestPool.acquire();
+      const vres = this.responsePool.acquire();
+      
+      const cleanup = () => {
+        this.requestPool.release(vreq);
+        this.responsePool.release(vres);
+      };
+
+      vreq.initialize(req, res, pattern, undefined, methodStr, url);
+      vres.initialize(res, this, cleanup);
+
+      if (!hasGlobalMws) {
+        try {
+          const out = handler(vreq, vres);
+          if (out instanceof Promise) {
+            out.catch(err => this.handleError(err, vreq, vres));
+          }
+        } catch (e) {
+          this.handleError(e, vreq, vres);
+        }
+        return;
+      }
+
+      this.executeRouterMiddlewareChain(vreq, vres, handler, this.globalMiddlewares, this.errorHandlers);
+    };
+
+    (this.uws as any)[method](pattern, compiled);
     return this;
   }
 
@@ -165,6 +195,11 @@ export class Voltrix extends Renderer {
     for (const r of routes) {
       const { method, fullPattern, handler, allMiddlewares, errorHandlers, paramIndices } = r;
 
+      const hasMws = this.globalMiddlewares.length > 0 || allMiddlewares.length > 0;
+      const chain = hasMws
+          ? [...this.globalMiddlewares, ...allMiddlewares]
+          : null;
+
       const compiled = (res: UWS.HttpResponse, req: UWS.HttpRequest) => {
         const vreq = this.requestPool.acquire();
         const vres = this.responsePool.acquire();
@@ -177,11 +212,7 @@ export class Voltrix extends Renderer {
         vreq.initialize(req, res, fullPattern, paramIndices);
         vres.initialize(res, this, cleanup);
 
-        const chain = this.globalMiddlewares.length
-          ? [...this.globalMiddlewares, ...allMiddlewares]
-          : allMiddlewares;
-
-        if (chain.length === 0) {
+        if (!chain) {
           try {
             const out = handler(vreq, vres);
             if (out instanceof Promise) {
@@ -310,7 +341,7 @@ export class Voltrix extends Renderer {
       return;
     }
 
-    const key = `${method}:${pattern}`;
+    const key = method + pattern; // Faster than template string
     let compiled = this.handlerCache.get(key);
 
     if (!compiled) {
@@ -324,13 +355,11 @@ export class Voltrix extends Renderer {
     const req = this.requestPool.acquire();
     const res = this.responsePool.acquire();
 
-    const cleanup = () => {
+    req.initialize(uwsReq, uwsRes, pattern, undefined, method, path);
+    res.initialize(uwsRes, this, () => {
       this.requestPool.release(req);
       this.responsePool.release(res);
-    };
-
-    req.initialize(uwsReq, uwsRes, pattern);
-    res.initialize(uwsRes, this, cleanup);
+    });
 
     try {
       if (compiled.hasMiddleware) {

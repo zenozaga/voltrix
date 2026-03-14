@@ -1,11 +1,12 @@
 import type { HttpResponse } from 'uWebSockets.js';
 import type { IResponse } from '../types/http.js';
 import { Renderer } from '../renderer.js';
-import { STATUS_TEXT, StatusCode } from '../common/constants.js';
+import { STATUS_TEXT, StatusCode, STATUS_LINES } from '../common/constants.js';
 import { normalizeBodyForUWS, BodyInput } from '../common/normalize-data.js';
 
 export class Response implements IResponse {
   private _headers: Record<string, string> = {};
+  private _headerNames: string[] = [];
   private _statusCode = 200;
   private _sent = false;
 
@@ -23,6 +24,7 @@ export class Response implements IResponse {
     this.raw = raw;
     this.renderer = renderer;
     this._headers = {};
+    this._headerNames = [];
     this._statusCode = 200;
     this._sent = false;
     this.isAborted = false;
@@ -70,6 +72,9 @@ export class Response implements IResponse {
 
   header(name: string, value?: string): this | string | undefined {
     if (value !== undefined) {
+      if (this._headers[name] === undefined) {
+        this._headerNames.push(name);
+      }
       this._headers[name] = value;
       return this;
     }
@@ -125,18 +130,17 @@ export class Response implements IResponse {
     if (this._sent || this.isAborted) return;
     this._sent = true;
 
-    // Body is ALREADY normalized by send() or json() callers in many cases
-    // but we normalize here to be sure, then use it directly in end()
     const payload = normalizeBodyForUWS(body);
 
     this.raw.cork(() => {
-      const text = STATUS_TEXT[this._statusCode as StatusCode];
-      const statusLine = text ? `${this._statusCode} ${text}` : `${this._statusCode}`;
-
+      const statusLine = STATUS_LINES[this._statusCode] || String(this._statusCode);
       this.raw.writeStatus(statusLine);
 
-      for (const key in this._headers) {
-        this.raw.writeHeader(key, this._headers[key]);
+      const names = this._headerNames;
+      const headers = this._headers;
+      for (let i = 0; i < names.length; i++) {
+        const name = names[i];
+        this.raw.writeHeader(name, headers[name]);
       }
 
       this.raw.end(payload);
