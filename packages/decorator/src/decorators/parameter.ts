@@ -3,7 +3,8 @@
  */
 
 import { DecoratorFactory } from '../__internal/decorator-factory.js';
-import type { IRequest, IResponse } from '@voltrix/express';
+import type { IRequest } from '@voltrix/express';
+import type { Constructor } from '../__internal/metadata-registry.js';
 
 export type TransformFn<T = any, R = any> = (data: T, request: IRequest) => R | Promise<R>;
 
@@ -16,7 +17,7 @@ export type TransformFn<T = any, R = any> = (data: T, request: IRequest) => R | 
  * - @Query("key", transform) -> Specific key with transformation/validation
  */
 function createParamDecorator(type: string) {
-  return (keyOrSchema?: string | any, transform?: TransformFn) => {
+  return (keyOrSchema?: string | Constructor | any, transform?: TransformFn) => {
     const isKey = typeof keyOrSchema === 'string';
     return DecoratorFactory.create({
       type: 'parameter',

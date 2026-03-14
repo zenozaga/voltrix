@@ -20,8 +20,11 @@ export class Request implements IRequest {
   private _method?: string;
   private _url?: string;
 
+  private dataListeners: ((chunk: Uint8Array, isLast: boolean) => void)[] = [];
+  private dataConsuming = false;
+
   constructor() {
-    // Initial state will be set by initialize()
+    this.context = {};
   }
 
   /**
@@ -51,11 +54,15 @@ export class Request implements IRequest {
     this.cachedQuery = undefined;
     this.cachedParams = undefined;
     this.context = {};
+    this.dataListeners = [];
+    this.dataConsuming = false;
   }
 
-  public context: Record<string, any> = {};
+  public context!: Record<string, any>;
   private request!: HttpRequest;
   private response!: HttpResponse;
+  private accumulatedChunks: Uint8Array[] = [];
+  private streamFinished = false;
 
   // ================================================================
   // BUFFER → BODY → JSON  (High-performance implementation)
@@ -67,28 +74,21 @@ export class Request implements IRequest {
     return (this.cachedBuffer = await new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
 
-      this.response.onData((ab, isLast) => {
-        const chunk = Buffer.from(ab);
-
+      this.onData((chunk, isLast) => {
         // ------------------------------------------------------------
-        // EARLY JSON DETECTION (best-practice)
+        // EARLY JSON DETECTION
         // ------------------------------------------------------------
         if (!this.checkedJSON) {
           for (let i = 0; i < chunk.length; i++) {
             const byte = chunk[i];
-
-            // skip whitespace
             if (byte === 32 || byte === 9 || byte === 10 || byte === 13) continue;
-
-            // '{' = 0x7B, '[' = 0x5B
             this.detectedJSON = byte === 0x7b || byte === 0x5b;
             this.checkedJSON = true;
             break;
           }
         }
 
-        chunks.push(chunk);
-
+        chunks.push(Buffer.from(chunk));
         if (isLast) resolve(Buffer.concat(chunks));
       });
 
@@ -200,11 +200,34 @@ export class Request implements IRequest {
       return;
     }
 
-    this.response.onData((ab, isLast) => {
-      // Create a Uint8Array view of the ArrayBuffer
-      // IMPORTANT: ab is only valid during the execution of this callback
-      handler(new Uint8Array(ab), isLast);
-    });
+    if (this.streamFinished) {
+      const full = Buffer.concat(this.accumulatedChunks);
+      handler(full, true);
+      return;
+    }
+
+    this.dataListeners.push(handler);
+
+    if (!this.dataConsuming) {
+      this.dataConsuming = true;
+      this.response.onData((ab, isLast) => {
+        const chunk = new Uint8Array(ab);
+        const copy = new Uint8Array(chunk.length);
+        copy.set(chunk);
+
+        this.accumulatedChunks.push(copy);
+
+        for (const listener of this.dataListeners) {
+          listener(copy, isLast);
+        }
+
+        if (isLast) {
+          this.streamFinished = true;
+          this.cachedBuffer = Buffer.concat(this.accumulatedChunks);
+          this.dataListeners = [];
+        }
+      });
+    }
   }
 
   async parseMultipart(onPart: (part: MultipartPart) => void | Promise<void>): Promise<void> {

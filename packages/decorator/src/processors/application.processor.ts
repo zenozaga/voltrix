@@ -1,6 +1,6 @@
 import { MetadataRegistry, type MetadataBag, type Constructor } from '../__internal/metadata-registry.js';
 import { DIContainer } from '@voltrix/injector';
-import type { IRequest, IResponse } from '@voltrix/express';
+import { Voltrix, type IRequest, type IResponse } from '@voltrix/express';
 
 /**
  * 🌳 Discovery Tree Types
@@ -22,6 +22,7 @@ export interface ControllerNode extends DiscoveryNode {
 
 export interface ModuleNode extends DiscoveryNode {
   controllers: ControllerNode[];
+  subModules: ModuleNode[];
 }
 
 export interface AppTree {
@@ -34,13 +35,17 @@ export interface AppTree {
  */
 export async function createApplication(appClass: Constructor) {
   const container = new DIContainer();
-  const bag = MetadataRegistry.get(appClass);
+  const bag = MetadataRegistry.getOrCreate(appClass);
 
-  if (!bag || bag.type !== 'application') {
-    throw new Error('Target class is not a VoltrixApp');
-  }
+  if (bag.type !== 'application') throw new Error('Target class is not a VoltrixApp');
 
-  const { name, prefix = '', modules = [], providers = [], port = 3000 } = bag.options;
+  const {
+    name = 'VoltrixApp',
+    prefix = '',
+    modules = [],
+    providers = [],
+    port = 3000
+  } = bag.options;
 
   console.log(`\n🚀 [Voltrix] Bootstrapping application "${name}"...`);
 
@@ -48,30 +53,45 @@ export async function createApplication(appClass: Constructor) {
   providers.forEach((p: any) => container.addProvider(p));
   container.addProvider(appClass);
 
-  // 2. Register Modules, their Providers and Controllers
-  for (const Mod of modules) {
+
+  // 2. Register Modules, their Providers and Controllers (Recursive)
+  const registered = new Set<Constructor>();
+  const registerModule = (Mod: Constructor) => {
+    if (registered.has(Mod)) return;
+    registered.add(Mod);
+
     container.addProvider(Mod);
     const modBag = MetadataRegistry.get(Mod);
-    if (modBag?.options?.providers) {
-      modBag.options.providers.forEach((p: any) => container.addProvider(p));
+    if (!modBag) return;
+
+    if (modBag.options.providers) {
+      modBag.options.providers.forEach(p => container.addProvider(p as any));
     }
-    if (modBag?.options?.controllers) {
-      modBag.options.controllers.forEach((c: any) => container.addProvider(c));
+    if (modBag.options.controllers) {
+      modBag.options.controllers.forEach(c => container.addProvider(c));
     }
-  }
+    if (modBag.options.modules) {
+      modBag.options.modules.forEach(sub => registerModule(sub));
+    }
+  };
+
+  modules.forEach(Mod => registerModule(Mod));
 
   // 3. Orchestrate Async Warm-up
   await warmUpProviders(container);
 
   // 4. Build Discovery Tree & Generate Routes with Hierarchical Context
-  const tree: AppTree = { name, modules: [] };
-  const app = createExpressLikeApp(); // Real uWS integration later
+  const tree: AppTree = { name: name!, modules: [] };
+  const app = new Voltrix();
 
   const appScopes = bag.custom.get('@@global')?.get('scopes');
+  const appRoles = bag.custom.get('@@global')?.get('roles');
+
   const initialContext: ProcessorContext = {
-    middlewares: bag.options.middleware || [],
+    middlewares: bag.options.middlewares || [],
     scopes: appScopes?.scopes || [],
-    onFail: appScopes?.onFail
+    roles: appRoles?.roles || [],
+    onFail: appScopes?.onFail || appRoles?.onFail
   };
 
   for (const Mod of modules) {
@@ -81,11 +101,11 @@ export async function createApplication(appClass: Constructor) {
 
   console.log(`✅ [Voltrix] Bootstrapped successfully on port ${port}\n`);
 
-  return { 
-    app, 
+  return {
+    app,
     tree,
     container,
-    listen: (p?: number) => app.listen(p || port) 
+    listen: (p?: number) => app.listen(p || port)
   };
 }
 
@@ -98,7 +118,7 @@ async function warmUpProviders(container: DIContainer) {
   // We use a safe resolution strategy
   // @ts-ignore
   const tokens = Array.from(container.providers.keys());
-  
+
   for (const token of tokens) {
     try {
       const instance = container.resolve(token as any);
@@ -118,6 +138,7 @@ async function warmUpProviders(container: DIContainer) {
 interface ProcessorContext {
   middlewares: any[];
   scopes: string[];
+  roles: string[];
   onFail?: (req: IRequest, res: IResponse) => any;
 }
 
@@ -125,32 +146,48 @@ interface ProcessorContext {
  * 📦 Process Module V2
  */
 async function processModuleV2(
-  Mod: Constructor, 
-  parentPath: string, 
-  container: DIContainer, 
+  Mod: Constructor,
+  parentPath: string,
+  container: DIContainer,
   app: any,
   inherited: ProcessorContext
 ): Promise<ModuleNode> {
   const bag = MetadataRegistry.get(Mod);
   if (!bag) throw new Error(`Class ${Mod.name} is not a valid Module`);
 
-  const { controllers = [], prefix = '', path = '', middlewares = [] } = bag.options;
+  const { controllers = [], modules = [], prefix = '', path = '', middlewares = [] } = bag.options;
   const fullPath = joinPaths(parentPath, prefix, path);
 
   const modScopes = bag.custom.get('@@global')?.get('scopes');
+  const modRoles = bag.custom.get('@@global')?.get('roles');
+
+  const modMiddlewares = [
+    ...(middlewares || []),
+    ...(bag.middlewares.get('@@global') || [])
+  ];
+
   const modContext: ProcessorContext = {
-    middlewares: [...inherited.middlewares, ...middlewares],
+    middlewares: [...inherited.middlewares, ...modMiddlewares],
     scopes: Array.from(new Set([...inherited.scopes, ...(modScopes?.scopes || [])])),
-    onFail: modScopes?.onFail || inherited.onFail
+    roles: Array.from(new Set([...inherited.roles, ...(modRoles?.roles || [])])),
+    onFail: modScopes?.onFail || modRoles?.onFail || inherited.onFail
   };
 
   const node: ModuleNode = {
     target: Mod,
     fullPath,
     meta: bag.options,
-    controllers: []
+    controllers: [],
+    subModules: []
   };
 
+  // Process Sub-modules
+  for (const Sub of modules) {
+    const subNode = await processModuleV2(Sub, fullPath, container, app, modContext);
+    node.subModules.push(subNode);
+  }
+
+  // Process Controllers
   for (const Ctrl of controllers) {
     const ctrlNode = await processControllerV2(Ctrl, fullPath, container, app, modContext);
     node.controllers.push(ctrlNode);
@@ -163,24 +200,32 @@ async function processModuleV2(
  * 🎯 Process Controller V2
  */
 async function processControllerV2(
-  Ctrl: Constructor, 
-  parentPath: string, 
-  container: DIContainer, 
+  Ctrl: Constructor,
+  parentPath: string,
+  container: DIContainer,
   app: any,
   inherited: ProcessorContext
 ): Promise<ControllerNode> {
   const bag = MetadataRegistry.get(Ctrl);
   if (!bag) throw new Error(`Class ${Ctrl.name} is not a valid Controller`);
 
-  const { path = '' } = bag.options;
+  const { path = '', middlewares = [] } = bag.options;
   const fullPath = joinPaths(parentPath, path);
   const instance = container.resolve(Ctrl);
 
   const ctrlScopes = bag.custom.get('@@global')?.get('scopes');
+  const ctrlRoles = bag.custom.get('@@global')?.get('roles');
+
+  const ctrlMiddlewares = [
+    ...(middlewares || []),
+    ...(bag.middlewares.get('@@global') || [])
+  ];
+
   const ctrlContext: ProcessorContext = {
-    middlewares: [...inherited.middlewares, ...(bag.middlewares.get('@@global') || [])],
+    middlewares: [...inherited.middlewares, ...ctrlMiddlewares],
     scopes: Array.from(new Set([...inherited.scopes, ...(ctrlScopes?.scopes || [])])),
-    onFail: ctrlScopes?.onFail || inherited.onFail
+    roles: Array.from(new Set([...inherited.roles, ...(ctrlRoles?.roles || [])])),
+    onFail: ctrlScopes?.onFail || ctrlRoles?.onFail || inherited.onFail
   };
 
   if (!instance) {
@@ -193,8 +238,8 @@ async function processControllerV2(
   // For now, we trust the Injector, but we'll add a sanity check.
   Object.keys(instance).forEach(key => {
     if ((instance as any)[key] === null || (instance as any)[key] === undefined) {
-       // Optional: Log warning about potential missing dependency
-       // console.warn(`[Voltrix] Warning: Dependency "${key}" in ${Ctrl.name} is ${typeof (instance as any)[key]}`);
+      // Optional: Log warning about potential missing dependency
+      // console.warn(`[Voltrix] Warning: Dependency "${key}" in ${Ctrl.name} is ${typeof (instance as any)[key]}`);
     }
   });
 
@@ -208,39 +253,54 @@ async function processControllerV2(
   for (const [key, route] of bag.routes) {
     const routePath = joinPaths(fullPath, route.path);
     const resolver = createSpecializedResolver(bag, key);
-    
+
     // 🧬 Gather Middlewares (Method level)
     const methodMiddlewares = bag.middlewares.get(key) || [];
     const finalMiddlewares = [...ctrlContext.middlewares, ...methodMiddlewares];
 
-    // 🔬 Gather Scopes (Method level)
+    // 🔬 Gather Scopes & Roles (Method level)
     const routeScopeOptions = bag.custom.get(key)?.get('scopes');
-    
+    const routeRoleOptions = bag.custom.get(key)?.get('roles');
+
     const finalScopes = Array.from(new Set([...ctrlContext.scopes, ...(routeScopeOptions?.scopes || [])]));
-    const finalOnFail = routeScopeOptions?.onFail || ctrlContext.onFail;
+    const finalRoles = Array.from(new Set([...ctrlContext.roles, ...(routeRoleOptions?.roles || [])]));
+    const finalOnFail = routeScopeOptions?.onFail || routeRoleOptions?.onFail || ctrlContext.onFail;
 
     // 🔥 THE HOTPATH HANDLER
     const handler = async (req: IRequest, res: IResponse) => {
       try {
-        // 1. Run Scopes (if any)
+        // 1. Run Middlewares (App -> Module -> Controller -> Method)
+        for (const mid of finalMiddlewares) {
+          await new Promise<void>((resolve, reject) => {
+            mid(req, res, (err?: any) => err ? reject(err) : resolve());
+          });
+          if (res.headersSent) return; // Middleware already sent response
+        }
+
+        // 2. Run Scopes (if any) - Now they have access to req.user from middlewares
         if (finalScopes.length > 0) {
           const userScopes = (req as any).user?.scopes || [];
           const hasAccess = finalScopes.every((s: string) => userScopes.includes(s));
-          
+
           if (!hasAccess) {
             if (finalOnFail) return finalOnFail(req, res);
             return res.status(403).json({ error: 'Forbidden', required: finalScopes });
           }
         }
 
-        // 2. Run Middlewares
-        for (const mid of finalMiddlewares) {
-          await new Promise<void>((resolve, reject) => {
-            mid(req, res, (err?: any) => err ? reject(err) : resolve());
-          });
+        // 3. Run Roles (if any)
+        if (finalRoles.length > 0) {
+          const userRoles = (req as any).user?.roles || [];
+          const hasRole = finalRoles.some((r: string) => userRoles.includes(r));
+
+          if (!hasRole) {
+            if (finalOnFail) return finalOnFail(req, res);
+            return res.status(403).json({ error: 'Forbidden', required: finalRoles });
+          }
         }
 
-        // 3. Resolve Params & Execute
+        // 4. Resolve Params & Execute
+        // console.log(`[DEBUG] Resolving params for ${routePath}`);
         const args = await resolver(req, res);
         const result = await (instance as any)[key](...args);
         if (result !== undefined) {
@@ -255,7 +315,7 @@ async function processControllerV2(
       }
     };
 
-    app.addRoute(route.method, routePath, handler);
+    app.any(routePath, handler as any);
 
     node.routes.push({
       target: Ctrl,
@@ -274,7 +334,7 @@ async function processControllerV2(
  */
 function createSpecializedResolver(bag: MetadataBag, key: string | symbol) {
   const params = bag.parameters.get(key) || [];
-  
+
   // Pre-generate the mapper functions to avoid switch/case in hotpath
   const mappers = params.map(p => {
     let baseResolver: (req: IRequest, res: IResponse) => any;

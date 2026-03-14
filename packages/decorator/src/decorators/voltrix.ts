@@ -5,6 +5,8 @@
 
 import { DecoratorFactory } from '../__internal/decorator-factory.js';
 import type { Middleware } from '@voltrix/express';
+import type { Constructor } from '../__internal/metadata-registry.js';
+import type { Provider } from '@voltrix/injector';
 
 /**
  * Interface for Voltrix Application lifecycle
@@ -22,10 +24,10 @@ export interface VoltrixAppOptions {
   name: string;
   version?: string;
   description?: string;
-  modules: any[];
+  modules: Constructor[];
   prefix?: string;
-  providers?: any[];
-  middleware?: Middleware[];
+  providers?: (Constructor | Provider)[];
+  middlewares?: Middleware[];
   port?: number;
 }
 
@@ -34,9 +36,10 @@ export interface VoltrixAppOptions {
  */
 export interface VoltrixModuleOptions {
   path?: string;
-  controllers?: any[];
-  providers?: any[];
-  imports?: any[];
+  modules?: Constructor[];
+  controllers?: Constructor[];
+  providers?: (Constructor | Provider)[];
+  imports?: Constructor[]; // Reserved for future use
   middlewares?: Middleware[];
   prefix?: string;
 }

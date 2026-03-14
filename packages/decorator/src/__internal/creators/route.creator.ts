@@ -4,9 +4,10 @@
  */
 
 import { DecoratorFactory } from '../decorator-factory.js';
+import type { Middleware } from '@voltrix/express';
 
 export interface RouteOptions {
-  middleware?: Function[];
+  middlewares?: Middleware[];
   roles?: string[];
   scopes?: string[];
   auth?: boolean;

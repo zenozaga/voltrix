@@ -1,4 +1,5 @@
 import { DecoratorFactory } from '../__internal/decorator-factory.js';
+import type { IRequest } from '@voltrix/express';
 
 /**
  * 🚀 File Decorator
@@ -12,8 +13,6 @@ export interface FileOptions {
 
 /**
  * Marks a parameter for file injection.
- * Usage:
- * saveData(@File('avatar') file: any)
  */
 export function File(optionsOrName: string | FileOptions) {
   const options = typeof optionsOrName === 'string'
@@ -25,9 +24,28 @@ export function File(optionsOrName: string | FileOptions) {
     value: {
       type: 'custom',
       name: 'file',
-      transform: async (req: any) => {
-         // Mock multipart parsing or just return from req.files
-         return (req as any).files?.[options.name];
+      transform: async (req: IRequest) => {
+         // 📦 Lazy Multipart Parsing
+         if (!req.context._filesParsed) {
+           req.context.files = {};
+           try {
+             await req.parseMultipart((part) => {
+               if (part.filename) {
+                  req.context.files![part.name] = part;
+               }
+             });
+             req.context._filesParsed = true;
+           } catch (e) {
+             // Not a multipart request or parsing failed
+             req.context._filesParsed = true; 
+           }
+         }
+         
+         const file = req.context.files?.[options.name];
+         if (options.required && !file) {
+            throw new Error(`File "${options.name}" is required.`);
+         }
+         return file;
       },
       options
     }
