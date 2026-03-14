@@ -13,7 +13,7 @@ export async function createTestServer(): Promise<TestServer> {
   const port = 3000 + Math.floor(Math.random() * 1000);
   const app = new Voltrix();
   const router = new Router();
-  const baseURL = `http://localhost:${port}`;
+  const baseURL = `http://127.0.0.1:${port}`;
 
   app.useNotFound((req: any, res: any) => {
     res.status(404).json({ error: 'Not found' });

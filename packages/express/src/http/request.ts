@@ -50,8 +50,10 @@ export class Request implements IRequest {
     this.checkedJSON = false;
     this.cachedQuery = undefined;
     this.cachedParams = undefined;
+    this.context = {};
   }
 
+  public context: Record<string, any> = {};
   private request!: HttpRequest;
   private response!: HttpResponse;
 

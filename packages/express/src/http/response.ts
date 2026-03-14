@@ -9,6 +9,7 @@ import { normalizeBodyForUWS, BodyInput } from '../common/normalize-data.js';
 export class Response implements IResponse {
   public _headers: Record<string, string> = {};
   public _headerNames: string[] = [];
+  public locals: Record<string, any> = {};
   private _statusCode = 200;
   private _sent = false;
 
@@ -31,6 +32,7 @@ export class Response implements IResponse {
     this._sent = false;
     this.isAborted = false;
     this.onFinished = onFinished;
+    this.locals = {};
 
     this.raw.onAborted(() => {
       this.isAborted = true;
@@ -338,7 +340,13 @@ export class Response implements IResponse {
 
         this.raw.onAborted(() => {
           this.isAborted = true;
-          fs.closeSync(fd);
+          if (fd !== undefined) {
+            try {
+              fs.closeSync(fd);
+            } catch (e) {
+              // Ignore already closed or invalid fd
+            }
+          }
           this.finished();
           reject(new Error('Aborted'));
         });

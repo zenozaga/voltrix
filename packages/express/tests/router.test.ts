@@ -13,7 +13,7 @@ describe('Router Integration Tests', () => {
     port = 3000 + Math.floor(Math.random() * 1000);
     app = new Voltrix();
     router = new Router();
-    baseURL = `http://localhost:${port}`;
+    baseURL = `http://127.0.0.1:${port}`;
 
     // Add 404 handler to prevent "not responding" errors
     app.get('/*', (req: any, res: any) => {

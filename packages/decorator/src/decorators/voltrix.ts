@@ -3,9 +3,8 @@
  * Following hyper-express pattern for Voltrix Express framework
  */
 
-import { DecoratorHelper } from '../__internal/helpers/decorator.helper.js';
-import { SYMBOLS } from '../__internal/symbols.constant.js';
-import type { MiddlewareFunction } from '@voltrix/express';
+import { DecoratorFactory } from '../__internal/decorator-factory.js';
+import type { Middleware } from '@voltrix/express';
 
 /**
  * Interface for Voltrix Application lifecycle
@@ -25,8 +24,8 @@ export interface VoltrixAppOptions {
   description?: string;
   modules: any[];
   prefix?: string;
-  cors?: boolean;
-  middleware?: MiddlewareFunction[];
+  providers?: any[];
+  middleware?: Middleware[];
   port?: number;
 }
 
@@ -34,88 +33,59 @@ export interface VoltrixAppOptions {
  * VoltrixModule decorator options
  */
 export interface VoltrixModuleOptions {
-  path: string;
+  path?: string;
   controllers?: any[];
-  middlewares?: MiddlewareFunction[];
+  providers?: any[];
+  imports?: any[];
+  middlewares?: Middleware[];
   prefix?: string;
+}
+
+/**
+ * VoltrixController decorator options
+ */
+export interface VoltrixControllerOptions {
+  path?: string;
+  middlewares?: Middleware[];
 }
 
 /**
  * 🚀 VoltrixApp - Application decorator
  */
 export function VoltrixApp(options: VoltrixAppOptions) {
-  return function <T extends { new (...args: any[]): {} }>(constructor: T) {
-    return DecoratorHelper({
-      type: 'application',
-      key: SYMBOLS.APPLICATION,
-      targetResolver: (target) => target,
-      options: (saved, Target) => ({
-        ...saved,
-        name: options.name,
-        version: options.version,
-        description: options.description,
-        modules: options.modules,
-        prefix: options.prefix || '',
-        cors: options.cors || false,
-        middleware: options.middleware || [],
-        port: options.port || 3000
-      })
-    })(constructor);
-  };
+  return DecoratorFactory.create({
+    type: 'application',
+    value: {
+      port: 3000,
+      ...options
+    }
+  });
 }
 
 /**
- * 🚀 VoltrixModule - Module decorator
+ * 🚀 Module - Module decorator
  */
-export function VoltrixModule(options: VoltrixModuleOptions) {
-  return function <T extends { new (...args: any[]): {} }>(constructor: T) {
-    return DecoratorHelper({
-      type: 'module',
-      key: SYMBOLS.MODULE,
-      targetResolver: (target) => target,
-      options: (saved, Target) => ({
-        ...saved,
-        path: options.path,
-        controllers: options.controllers || [],
-        middlewares: options.middlewares || [],
-        prefix: options.prefix
-      })
-    })(constructor);
-  };
+export function Module(options: VoltrixModuleOptions) {
+  return DecoratorFactory.create({
+    type: 'module',
+    value: options
+  });
 }
 
 /**
- * 🚀 VoltrixController - Controller decorator
+ * 🚀 Controller - Controller decorator
  */
-export function VoltrixController(version?: string) {
-  return function <T extends { new (...args: any[]): {} }>(constructor: T) {
-    return DecoratorHelper({
-      type: 'controller',
-      key: SYMBOLS.CONTROLLER,
-      targetResolver: (target) => target,
-      options: (saved, Target) => ({
-        ...saved,
-        version,
-        path: version ? `/${version}` : ''
-      })
-    })(constructor);
-  };
+export function Controller(pathOrOptions?: string | VoltrixControllerOptions) {
+  const options = typeof pathOrOptions === 'string'
+    ? { path: pathOrOptions }
+    : (pathOrOptions || {});
+
+  return DecoratorFactory.create({
+    type: 'controller',
+    value: options
+  });
 }
 
-/**
- * 🚀 Middleware decorator
- */
-export function Middleware(middleware: MiddlewareFunction) {
-  return function (target: any, propertyKey?: string | symbol) {
-    return DecoratorHelper({
-      type: 'middleware',
-      key: SYMBOLS.MIDDLEWARE,
-      targetResolver: (target) => propertyKey ? target : target.constructor ?? target,
-      options: (saved, Target) => {
-        const middlewares = saved || [];
-        middlewares.push(middleware);
-        return middlewares;
-      }
-    })(target, propertyKey);
-  };
-}
+// 📦 Aliases for backward compatibility
+export const VoltrixModule = Module;
+export const VoltrixController = Controller;

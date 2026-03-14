@@ -1,62 +1,46 @@
-import 'reflect-metadata';
-import { MiddlewareType } from '../types/middleware';
-import MetadataStore from '../__internal/stores/metadata.store';
-import { SYMBOLS } from '../__internal/symbols.constant';
-import { Middleware as MW } from '@voltrix/express';
+import { DecoratorFactory } from '../__internal/decorator-factory.js';
+import type { Middleware as VoltrixMiddleware, IRequest, IResponse, NextFunction } from '@voltrix/express';
 
-export const Middleware =
-  (...middleware: MiddlewareType[]): ClassDecorator & MethodDecorator =>
-  (Target: any, propertyKey?: any) => {
-    const targetOptions = {
-      target: Target,
-      propertyKey,
-    };
-
-    const store: MiddlewareType[] = MetadataStore.get(SYMBOLS.MIDDLEWARE, targetOptions, []);
-    store.push(...middleware);
-    MetadataStore.define(SYMBOLS.MIDDLEWARE, store, targetOptions);
-  };
+/**
+ * 🚀 Middleware Decorator
+ * Can be applied to Classes or Methods.
+ */
+export const Middleware = (middleware: VoltrixMiddleware): ClassDecorator & MethodDecorator => {
+  return DecoratorFactory.create({
+    type: 'middleware',
+    value: middleware
+  }) as any;
+};
 
 /**
  * Exclude middleware from matching paths.
- *
- * @param expressions
- * @param middleware
- * @returns
  */
+// @ts-ignore
 Middleware.exclude = (
   expressions: RegExp | RegExp[],
-  middleware: MW
-): ClassDecorator & MethodDecorator => Middleware(buildHandler('exclude', expressions, middleware));
+  middleware: VoltrixMiddleware
+): MethodDecorator & ClassDecorator => Middleware(buildHandler('exclude', expressions, middleware));
 
 /**
  * Only run middleware on matching paths.
- *
- * @param expresiosn
- * @param middleware
- * @returns
  */
+// @ts-ignore
 Middleware.only = (
   expressions: RegExp | RegExp[],
-  middleware: MW
-): ClassDecorator & MethodDecorator => Middleware(buildHandler('only', expressions, middleware));
+  middleware: VoltrixMiddleware
+): MethodDecorator & ClassDecorator => Middleware(buildHandler('only', expressions, middleware));
 
 /**
- *
  * Helper function to build middleware handlers for "only" and "exclude" modes.
- *
- * @param mode
- * @param expresions
- * @returns
  */
-const buildHandler = (
+function buildHandler(
   mode: 'only' | 'exclude',
   expressions: RegExp | RegExp[],
-  middleware: MW
-): MW => {
+  middleware: VoltrixMiddleware
+): VoltrixMiddleware {
   const matchers = Array.isArray(expressions) ? expressions : [expressions];
 
-  return (req, res, next) => {
+  return (req: IRequest, res: IResponse, next: NextFunction) => {
     const matches = matchers.some(rx => rx.test(req.url));
 
     if ((mode === 'only' && !matches) || (mode === 'exclude' && matches)) {
@@ -65,4 +49,4 @@ const buildHandler = (
 
     return middleware(req, res, next);
   };
-};
+}

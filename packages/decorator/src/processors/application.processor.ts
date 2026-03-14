@@ -1,225 +1,226 @@
-/**
- * 🚀 Voltrix Application Processor
- * Processes VoltrixApp decorators and creates the application
- */
-
-import { getDecorData } from '../__internal/helpers/decorator.helper.js';
-import { SYMBOLS, KEY_PARAMS_ROUTE } from '../__internal/symbols.constant.js';
-import { RequestHelpers } from '../extensions/request.extensions.js';
-import type { 
-  IVoltrixApplication, 
-  VoltrixAppOptions, 
-  VoltrixModuleOptions 
-} from '../decorators/voltrix.js';
-import type { RouteInfo, RouterList } from '../__internal/creators/route.creator.js';
+import { MetadataRegistry, type MetadataBag, type Constructor } from '../__internal/metadata-registry.js';
+import { DIContainer } from '@voltrix/injector';
+import type { IRequest, IResponse } from '@voltrix/express';
 
 /**
- * 🚀 Create Voltrix Application from decorated class
+ * 🌳 Discovery Tree Types
  */
-export async function createApplication<T extends IVoltrixApplication>(
-  AppClass: new () => T
-): Promise<{ app: any; appInstance: T }> {
-  const appInstance = new AppClass();
-  const appMetadata = getDecorData(AppClass, SYMBOLS.APPLICATION) as VoltrixAppOptions;
+export interface DiscoveryNode {
+  target: Constructor;
+  fullPath: string;
+  meta: any;
+}
 
-  if (!appMetadata) {
-    throw new Error('Class must be decorated with @VoltrixApp');
-  }
+export interface RouteNode extends DiscoveryNode {
+  method: string;
+  propertyKey: string | symbol;
+}
 
-  console.log(`🚀 Creating Voltrix application: ${appMetadata.name}`);
-  
-  // Create mock express-like app for demonstration
-  const app = createMockApp();
+export interface ControllerNode extends DiscoveryNode {
+  routes: RouteNode[];
+}
 
-  // Apply global middleware
-  if (appMetadata.middleware) {
-    appMetadata.middleware.forEach(middleware => {
-      app.use(middleware);
-    });
-  }
+export interface ModuleNode extends DiscoveryNode {
+  controllers: ControllerNode[];
+}
 
-  // Process modules
-  for (const ModuleClass of appMetadata.modules) {
-    await processModule(app, ModuleClass, appMetadata.prefix);
-  }
-
-  // Call lifecycle hook
-  if (appInstance.onPrepare) {
-    await appInstance.onPrepare();
-  }
-
-  return { app, appInstance };
+export interface AppTree {
+  name: string;
+  modules: ModuleNode[];
 }
 
 /**
- * Process a module and its controllers
+ * 🚀 Voltrix Application Processor V2 (The Compiler)
  */
-async function processModule(app: any, ModuleClass: any, globalPrefix = '') {
-  const moduleMetadata = getDecorData(ModuleClass, SYMBOLS.MODULE) as VoltrixModuleOptions;
-  
-  if (!moduleMetadata) {
-    throw new Error(`${ModuleClass.name} must be decorated with @VoltrixModule`);
+export async function createApplication(AppClass: Constructor) {
+  const container = new DIContainer();
+  const bag = MetadataRegistry.get(AppClass);
+
+  if (!bag || bag.type !== 'application') {
+    throw new Error(`Class ${AppClass.name} must be decorated with @VoltrixApp`);
   }
 
-  const modulePath = joinPaths(globalPrefix, moduleMetadata.prefix || '', moduleMetadata.path);
-  console.log(`📦 Processing module: ${ModuleClass.name} -> ${modulePath}`);
+  const { name, prefix = '', modules = [], providers = [], port = 3000 } = bag.options;
 
-  // Apply module middleware
-  if (moduleMetadata.middlewares) {
-    moduleMetadata.middlewares.forEach(middleware => {
-      app.use(modulePath + '/*', middleware);
-    });
-  }
+  console.log(`\n🚀 [Voltrix] Initializing "${name}"...`);
 
-  // Process controllers
-  for (const ControllerClass of moduleMetadata.controllers || []) {
-    await processController(app, ControllerClass, modulePath);
-  }
-}
+  // 1. Setup DI Container
+  providers.forEach((p: any) => container.addProvider(p));
+  container.register(AppClass);
 
-/**
- * Process a controller and its routes
- */
-async function processController(app: any, ControllerClass: any, modulePath: string) {
-  const controllerInstance = new ControllerClass();
-  const controllerMetadata = getDecorData(ControllerClass, SYMBOLS.CONTROLLER) as any;
-  
-  const controllerPath = controllerMetadata?.path || '';
-  const fullControllerPath = joinPaths(modulePath, controllerPath);
-
-  console.log(`🎯 Processing controller: ${ControllerClass.name} -> ${fullControllerPath}`);
-
-  // Get routes from controller
-  const routerList = getDecorData(ControllerClass, KEY_PARAMS_ROUTE) as RouterList;
-  
-  if (routerList?.routes) {
-    for (const route of routerList.routes) {
-      const fullPath = joinPaths(fullControllerPath, route.path);
-      const handler = createEnhancedHandler(controllerInstance, route);
-      
-      // Register route
-      app.addRoute(route.method, fullPath, handler);
-      console.log(`  ${route.method.padEnd(6)} ${fullPath.padEnd(30)} -> ${route.className}.${String(route.propertyKey)}`);
+  // 2. Discover Hierarchy & Register providers from modules
+  for (const Mod of modules) {
+    const modBag = MetadataRegistry.get(Mod);
+    if (modBag?.options.providers) {
+      modBag.options.providers.forEach((p: any) => container.addProvider(p));
     }
   }
-}
 
-/**
- * Create enhanced handler with parameter injection
- */
-function createEnhancedHandler(instance: any, route: RouteInfo) {
-  return async (req: any, res: any) => {
-    try {
-      // Get parameter metadata
-      const parameters = getDecorData(instance.constructor, SYMBOLS.PARAMETERS) as any[] || [];
-      const methodParams = parameters.filter((p: any) => p.propertyKey === route.propertyKey);
-      
-      // Resolve parameters
-      const args = await resolveParameters(req, res, methodParams);
-      
-      // Execute method
-      const result = await route.handler.apply(instance, args);
-      
-      // Handle response if not already sent
-      if (result !== undefined && !res.headersSent) {
-        if (typeof result === 'object') {
-          res.json(result);
-        } else {
-          res.send(result);
-        }
-      }
-    } catch (error) {
-      console.error('Handler error:', error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Internal server error' });
-      }
-    }
+  // 3. Orchestrate Async Warm-up
+  // Note: We'll add a helper to DIContainer to resolve all and check onInit
+  const providersInstances = await warmUpProviders(container);
+
+  // 4. Build Discovery Tree & Generate Routes
+  const tree: AppTree = { name, modules: [] };
+  const app = createExpressLikeApp(); // This should be replaced with real uWS integration later
+
+  for (const Mod of modules) {
+    const modNode = await processModuleV2(Mod, prefix, container, app);
+    tree.modules.push(modNode);
+  }
+
+  console.log(`✅ [Voltrix] Bootstrapped successfully on port ${port}\n`);
+
+  return { 
+    app, 
+    tree,
+    container,
+    listen: (p?: number) => app.listen(p || port) 
   };
 }
 
 /**
- * Resolve method parameters using decorators
+ * 🚛 Sequential Async Warm-up
+ * Trigger onInit in topological order (handled by DI resolution order)
  */
-async function resolveParameters(req: any, res: any, parameters: any[]): Promise<any[]> {
-  const args: any[] = [];
-  
-  for (const param of parameters.sort((a, b) => a.index - b.index)) {
-    let value;
-    
-    switch (param.type) {
-      case 'body':
-        value = req.body;
-        break;
-      case 'param':
-        value = param.key ? req.params[param.key] : req.params;
-        break;
-      case 'query':
-        value = param.key ? req.query[param.key] : req.query;
-        break;
-      case 'req':
-        value = req;
-        break;
-      case 'res':
-        value = res;
-        break;
-      case 'custom':
-        value = await param.handler(req);
-        break;
-      default:
-        value = undefined;
+async function warmUpProviders(container: DIContainer) {
+  // We trigger resolution of all registered providers.
+  // In the future, the Injector will track instances with onInit.
+  // For now, we manually scan instances in the container's store.
+  const instances = container.getInstances?.() || []; 
+  for (const instance of instances) {
+    if (instance && typeof (instance as any).onInit === 'function') {
+      await (instance as any).onInit();
     }
-    
-    args[param.index] = value;
   }
-  
-  return args;
 }
 
 /**
- * Helper to join paths
+ * 📦 Process Module V2
  */
-function joinPaths(...paths: string[]): string {
-  return paths
-    .filter(Boolean)
-    .join('/')
-    .replace(/\/+/g, '/')
-    .replace(/\/$/, '') || '/';
+async function processModuleV2(Mod: Constructor, parentPath: string, container: DIContainer, app: any): Promise<ModuleNode> {
+  const bag = MetadataRegistry.get(Mod);
+  if (!bag) throw new Error(`Class ${Mod.name} is not a valid Module`);
+
+  const { controllers = [], prefix = '', path = '' } = bag.options;
+  const fullPath = joinPaths(parentPath, prefix, path);
+
+  const node: ModuleNode = {
+    target: Mod,
+    fullPath,
+    meta: bag.options,
+    controllers: []
+  };
+
+  for (const Ctrl of controllers) {
+    const ctrlNode = await processControllerV2(Ctrl, fullPath, container, app);
+    node.controllers.push(ctrlNode);
+  }
+
+  return node;
 }
 
 /**
- * Create a mock Express-like app for demonstration
+ * 🎯 Process Controller V2
  */
-function createMockApp() {
-  const routes: Array<{ method: string; path: string; handler: Function }> = [];
-  const middlewares: Function[] = [];
+async function processControllerV2(Ctrl: Constructor, parentPath: string, container: DIContainer, app: any): Promise<ControllerNode> {
+  const bag = MetadataRegistry.get(Ctrl);
+  if (!bag) throw new Error(`Class ${Ctrl.name} is not a valid Controller`);
 
-  return {
-    use: (pathOrMiddleware: string | Function, middleware?: Function) => {
-      if (typeof pathOrMiddleware === 'function') {
-        middlewares.push(pathOrMiddleware);
-      } else if (middleware) {
-        middlewares.push(middleware);
-      }
-    },
+  const { path = '' } = bag.options;
+  const fullPath = joinPaths(parentPath, path);
+  const instance = container.resolve(Ctrl);
+
+  const node: ControllerNode = {
+    target: Ctrl,
+    fullPath,
+    meta: bag.options,
+    routes: []
+  };
+
+  for (const [key, route] of bag.routes) {
+    const routePath = joinPaths(fullPath, route.path);
+    const resolver = createSpecializedResolver(bag, key);
     
-    addRoute: (method: string, path: string, handler: Function) => {
-      routes.push({ method, path, handler });
-    },
+    // 🔥 THE HOTPATH HANDLER
+    const handler = async (req: IRequest, res: IResponse) => {
+      const args = await resolver(req, res);
+      const result = await (instance as any)[key](...args);
+      if (result !== undefined) res.send(result);
+    };
 
-    listen: async (port: number, callback?: () => void) => {
-      console.log('');
-      console.log('📋 Registered Routes:');
-      routes.forEach(route => {
-        console.log(`  ${route.method.padEnd(6)} ${route.path}`);
-      });
-      console.log('');
-      console.log(`🎉 Voltrix application listening on port ${port}`);
-      
-      if (callback) callback();
+    app.addRoute(route.method, routePath, handler);
+
+    node.routes.push({
+      target: Ctrl,
+      propertyKey: key,
+      method: route.method,
+      fullPath: routePath,
+      meta: { ...route, parameters: bag.parameters.get(key) }
+    });
+  }
+
+  return node;
+}
+
+/**
+ * ⚡ Specialized O(1) Resolver Generator
+ */
+function createSpecializedResolver(bag: MetadataBag, key: string | symbol) {
+  const params = bag.parameters.get(key) || [];
+  
+  // Pre-generate the mapper functions to avoid switch/case in hotpath
+  const mappers = params.map(p => {
+    let baseResolver: (req: IRequest, res: IResponse) => any;
+
+    switch (p.type) {
+      case 'body': baseResolver = (req) => req.json(); break;
+      case 'query': baseResolver = (req) => p.key ? req.query[p.key] : req.query; break;
+      case 'param': baseResolver = (req) => p.key ? req.params[p.key] : req.params; break;
+      case 'header': baseResolver = (req) => req.header(p.key!); break;
+      case 'req': baseResolver = (req) => req; break;
+      case 'res': baseResolver = (_, res) => res; break;
+      case 'custom': baseResolver = (req) => p.transform!(req); break;
+      default: baseResolver = () => undefined;
+    }
+
+    // Apply Schema or Intent Transformation
+    return async (req: IRequest, res: IResponse) => {
+      let val = baseResolver(req, res);
+      if (p.schema) {
+        val = await MetadataRegistry.runTransform(p.schema, val, p.type, p.key);
+      } else if (p.transform && p.type !== 'custom') {
+        val = await p.transform(val, req);
+      }
+      return val;
+    };
+  });
+
+  return async (req: IRequest, res: IResponse) => {
+    const args = new Array(mappers.length);
+    for (let i = 0; i < params.length; i++) {
+      const p = params[i]!;
+      args[p.index] = await mappers[i]!(req, res);
+    }
+    return args;
+  };
+}
+
+/**
+ * 🛠️ Helpers
+ */
+function joinPaths(...parts: string[]): string {
+  return '/' + parts.filter(Boolean).map(p => p.replace(/^\/|\/$/g, '')).filter(Boolean).join('/');
+}
+
+function createExpressLikeApp() {
+  const routes: any[] = [];
+  return {
+    addRoute: (method: string, path: string, handler: any) => routes.push({ method, path, handler }),
+    listen: (port: number) => {
+      console.log(`[Mock] Listening on ${port}`);
       return Promise.resolve();
     },
-
-    getRoutes: () => routes,
-    getMiddlewares: () => middlewares
+    _routes: routes
   };
 }

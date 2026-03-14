@@ -1,4 +1,4 @@
-import type { Constructor, Token } from './providers';
+import type { Constructor, Token, AbstractConstructor } from './providers';
 
 export const META = {
   INJECT: Symbol('__voltrix__inject'),
@@ -9,15 +9,16 @@ export const META = {
   SCOPE: Symbol('__voltrix__scope'),
   LIFETIME: Symbol('__voltrix__lifetime'),
   TIMEOUT: Symbol('__voltrix__timeout'),
+  TOKEN: Symbol('__voltrix__token'),
 } as const;
 
-const paramTypesCache: WeakMap<Constructor, any[] | null> = new WeakMap();
+const paramTypesCache: WeakMap<Constructor | AbstractConstructor, any[] | null> = new WeakMap();
 
 /**
  * Returns constructor parameter types using Reflect metadata.
  * Cached for faster subsequent calls.
  */
-export function getDesignParamTypes(target: Constructor): any[] | null {
+export function getDesignParamTypes(target: Constructor | AbstractConstructor): any[] | null {
   if (paramTypesCache.has(target)) return paramTypesCache.get(target)!;
 
   // Reflect metadata is always available after importing "reflect-metadata"
@@ -36,7 +37,7 @@ export function getInjectedTokens(proto: object): Token[] | undefined {
 }
 
 export function getInjectedProps<T = unknown>(
-  target: Constructor<T>
+  target: Constructor<T> | AbstractConstructor<T>
 ): Array<{ key: string | symbol; token: unknown; optional?: boolean }> | undefined {
   return Reflect.getOwnMetadata?.(META.INJECT_PROPS, target);
 }

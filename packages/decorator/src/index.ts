@@ -3,13 +3,13 @@
  * Optimized for maximum performance with minimal overhead
  */
 
-import './extensions/request.extensions.js';
-
-// Core decorators
+// Core decorators & Application Processor
 export * from './decorators/index.js';
+export * from './processors/application.processor.js';
 
-// Store exports for advanced usage
-export { getMetadataStore } from './__internal/stores/metadata.store.js';
-export { MiddlewareStore } from './__internal/stores/middleware.store.js';
-export { RoleStore } from './__internal/stores/role.store.js';
-export { ScopeStore } from './__internal/stores/scope.store.js';
+// Internal Utilities (Internal usage/Plugin developers)
+export { MetadataRegistry, type MetadataBag, type Constructor } from './__internal/metadata-registry.js';
+export { DecoratorFactory, type DecoratorConfig, type DecoratorType } from './__internal/decorator-factory.js';
+
+// Injector re-exports for unified API
+export { Inject, Injectable, DIContainer } from '@voltrix/injector';

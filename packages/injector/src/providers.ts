@@ -1,10 +1,17 @@
+export type AbstractConstructor<T = any> = abstract new (...args: any[]) => T;
 export type Constructor<T = any> = new (...args: any[]) => T;
-export type Token<T = any> = symbol | string | Constructor<T>;
+export type Token<T = any> = symbol | string | Constructor<T> | AbstractConstructor<T>;
 
 export type Scope = 'singleton' | 'transient' | 'scoped';
 
 export interface BaseProvider<T = unknown> {
-  token: Token<T>;
+  token?: Token<T>;
+  provide?: Token<T>;
+  useClass?: Constructor<T>;
+  useFactory?: (...deps: any[]) => T | Promise<T>;
+  useValue?: T;
+  useExisting?: Token<T>;
+  useToken?: Token<T>;
   scope?: Scope;
   lifetimeMs?: number;
   timeoutMs?: number;
@@ -37,7 +44,8 @@ export interface ValueProvider<T = unknown> extends BaseProvider<T> {
 
 export interface ExistingProvider<T = unknown> extends BaseProvider<T> {
   kind: 'existing';
-  useExisting: Token<T>;
+  useExisting?: Token<T>;
+  useToken?: Token<T>;
   useClass?: never;
   useFactory?: never;
   useValue?: never;

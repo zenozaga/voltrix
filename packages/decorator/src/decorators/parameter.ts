@@ -2,91 +2,82 @@
  * 🚀 Parameter Decorators for Voltrix (Refactored)
  */
 
-import { DecoratorHelper } from '../__internal/helpers/decorator.helper.js';
-import { SYMBOLS } from '../__internal/symbols.constant.js';
-import { IRequest } from '@voltrix/express';
+import { DecoratorFactory } from '../__internal/decorator-factory.js';
+import type { IRequest, IResponse } from '@voltrix/express';
 
-export interface ParameterInfo {
-  index: number;
-  type: string;
-  key?: string;
-  name?: string;
-  handler?: (request: IRequest) => Promise<any> | any;
-  options?: any;
-  propertyKey?: string | symbol;
-}
+export type TransformFn<T = any, R = any> = (data: T, request: IRequest) => R | Promise<R>;
 
-/* ============================================================
- * 🔥 Universal Parameter Decorator Factory
- * Replaces ALL duplicated logic from Body, Param, Query, Req, Res, Parser, etc.
- * ============================================================ */
-function createParamDecorator(config: {
-  type: string;
-  key?: string;
-  name?: string;
-  handler?: (request: IRequest) => any;
-  options?: any;
-}) {
-  return function (target: any, propertyKey: string | symbol | undefined, parameterIndex: number) {
-    return DecoratorHelper({
+/**
+ * 🛠️ Universal Parameter Decorator Factory
+ * Handles:
+ * - @Query() -> Full query object
+ * - @Query(Schema) -> Validated query object
+ * - @Query("key") -> Specific key
+ * - @Query("key", transform) -> Specific key with transformation/validation
+ */
+function createParamDecorator(type: string) {
+  return (keyOrSchema?: string | any, transform?: TransformFn) => {
+    const isKey = typeof keyOrSchema === 'string';
+    return DecoratorFactory.create({
       type: 'parameter',
-      key: SYMBOLS.PARAMETERS,
-      targetResolver: target => target,
-      options: (saved) => {
-        const params = saved || [];
-        params.push({
-          index: parameterIndex,
-          type: config.type,
-          key: config.key,
-          name: config.name,
-          handler: config.handler,
-          options: config.options,
-          propertyKey,
-        });
-        return params;
-      },
-    })(target, propertyKey);
+      value: {
+        type,
+        key: isKey ? keyOrSchema : undefined,
+        schema: isKey ? undefined : keyOrSchema,
+        transform: transform,
+      }
+    });
   };
-}
-
-/* ============================================================
- * 🚀 Custom Request Decorator – like HyperExpress Parser
- * ============================================================ */
-export function createCustomRequestDecorator<T>(
-  name: string,
-  handler: (request: IRequest) => Promise<T> | T,
-  options?: any
-) {
-  return createParamDecorator({
-    type: 'custom',
-    name,
-    handler,
-    options,
-  });
 }
 
 /* ============================================================
  * 🚀 Standard Decorators
  * ============================================================ */
 
-export const Body = () =>
-  createParamDecorator({ type: 'body' });
+export const Body = createParamDecorator('body');
+export const Param = createParamDecorator('param');
+export const Query = createParamDecorator('query');
+export const Header = createParamDecorator('header');
+export const Cookie = createParamDecorator('cookie');
 
-export const Param = (key?: string) =>
-  createParamDecorator({ type: 'param', key });
+/**
+ * 🚀 Inject Request
+ */
+export const Req = () => DecoratorFactory.create({
+  type: 'parameter',
+  value: { type: 'req' }
+});
 
-export const Query = (key?: string) =>
-  createParamDecorator({ type: 'query', key });
-
-export const Req = () =>
-  createParamDecorator({ type: 'req' });
-
-export const Res = () =>
-  createParamDecorator({ type: 'res' });
+/**
+ * 🚀 Inject Response
+ */
+export const Res = () => DecoratorFactory.create({
+  type: 'parameter',
+  value: { type: 'res' }
+});
 
 /* ============================================================
- * 🚀 Parser decorator (Zod-like validation)
+ * 🚀 Custom Request Decorator
  * ============================================================ */
+export function createCustomRequestDecorator<T>(
+  name: string,
+  handler: (request: IRequest) => Promise<T> | T,
+  options?: any
+) {
+  return DecoratorFactory.create({
+    type: 'parameter',
+    value: {
+      type: 'custom',
+      name,
+      transform: handler,
+      options,
+    }
+  });
+}
+
+/**
+ * 🚀 Parser decorator (Legacy support/Helper)
+ */
 export function Parser<T>(schema: { parse: (data: any) => T }) {
   return createCustomRequestDecorator<T>('Parser', async request => {
     const body = (await request.json?.()) || request.body;

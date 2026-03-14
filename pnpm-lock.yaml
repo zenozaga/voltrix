@@ -114,6 +114,9 @@ importers:
       '@voltrix/express':
         specifier: workspace:*
         version: link:../express
+      '@voltrix/injector':
+        specifier: workspace:*
+        version: link:../injector
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2

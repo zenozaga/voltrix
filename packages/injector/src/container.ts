@@ -7,6 +7,7 @@ import type {
   ProviderKind,
   ProviderResolver,
   FactoryProvider,
+  AbstractConstructor,
 } from './providers';
 import { ProviderNotFoundError, CircularDependencyError, InvalidProviderError } from './errors';
 import {
@@ -45,6 +46,7 @@ export class DIContainer {
   private readonly middlewares: MiddlewareFn[] = []; // ✅ Middlewares síncronos
   private readonly opts: Required<ContainerOptions>;
   private readonly resolvers = {} as Record<ProviderKind, ProviderResolver>;
+  private hasMiddleware = false;
 
   constructor(
     private readonly parent?: DIContainer,
@@ -101,6 +103,7 @@ export class DIContainer {
 
   use(fn: MiddlewareFn): void {
     this.middlewares.push(fn);
+    this.hasMiddleware = true;
   }
 
   private runMiddlewares<T>(
@@ -133,8 +136,8 @@ export class DIContainer {
   ////////////////////////////
 
   register<T>(provider: Omit<Provider<T>, 'kind'>): void {
-    const { token } = provider;
-    if (!token) throw new InvalidProviderError('Provider must define a token');
+    const token = provider.token ?? provider.provide;
+    if (!token) throw new InvalidProviderError('Provider must define a token or provide property');
 
     const kind =
       'useClass' in provider
@@ -143,21 +146,35 @@ export class DIContainer {
           ? 'factory'
           : 'useValue' in provider
             ? 'value'
-            : 'useExisting' in provider
+            : ('useExisting' in provider || (provider as any).useToken)
               ? 'existing'
               : undefined;
+
 
     if (!kind)
       throw new InvalidProviderError(`Invalid provider configuration for ${String(token)}`);
 
-    const _provider = { ...provider, kind } as Provider<T>;
+    const _provider = { ...provider, kind, token } as Provider<T>;
+    if (kind === 'existing') {
+      (_provider as any).useExisting = (provider as any).useExisting ?? (provider as any).useToken;
+    }
+
+
     const target = (provider as any).useClass as Constructor<T> | undefined;
     if (target) this.applyMetadata(target, _provider);
+
     this.providers.set(token, _provider);
   }
 
-  registerMany(providers: Constructor[]): void {
-    for (const provider of providers) this.register({ token: provider, useClass: provider });
+  registerMany(providers: (Constructor | AbstractConstructor)[]): void {
+    for (const provider of providers) this.register({ token: provider, useClass: provider as any });
+  }
+
+  /**
+   * Alias for resolve.
+   */
+  get<T>(token: Token<T>): T {
+    return this.resolve(token);
   }
 
   has(token: Token): boolean {
@@ -168,13 +185,28 @@ export class DIContainer {
   /// Resolution (con middleware síncrono)
   ////////////////////////////
 
-  resolve<T>(token: Token<T>, stack: Set<Token> = new Set()): T {
+  resolve<T>(token: Token<T>, stack?: Set<Token>): T {
     const cached = this.instances.get(token);
-    if (cached && !this.isExpired(cached)) return this.emitAndReturn(token, cached.value as T);
-    if (cached && this.isExpired(cached)) this.instances.delete(token);
+    if (cached) {
+      if (cached.expiresAt === undefined || Date.now() < cached.expiresAt) {
+        const val = cached.value as T;
+        if (this.hooks.hasListeners) {
+          this.hooks.emit({ type: 'resolve', token, instance: val });
+        }
+        return val;
+      }
+      this.instances.delete(token);
+    }
 
-    if (!this.providers.has(token) && InjectableStore.has(token)) {
-      this.register({ token, useClass: token as any });
+    if (!stack) stack = new Set();
+
+    if (!this.providers.has(token)) {
+      const impl = InjectableStore.getImplementation(token);
+      if (impl) {
+        this.register({ token, useClass: impl });
+      } else if (InjectableStore.has(token)) {
+        this.register({ token, useClass: token as any });
+      }
     }
 
     const provider = this.getProviderOrThrow(token, stack);
@@ -184,14 +216,29 @@ export class DIContainer {
     stack.add(token);
 
     try {
-      // 🔥 Middlewares envuelven el proceso de resolución
-      const created = this.runMiddlewares(token, provider, stack, () => {
+      // Fast path: skip middleware if not present
+      if (!this.hasMiddleware) {
         const result = this.instantiate(provider, stack);
         this.maybeCache(token, provider, result);
-        return this.emitAndReturn(token, result, true);
-      });
 
-      return created;
+        if (this.hooks.hasListeners) {
+          this.hooks.emit({ type: 'create', token, instance: result });
+          this.hooks.emit({ type: 'resolve', token, instance: result });
+        }
+        return result;
+      }
+
+      // Hot path: Middlewares wrap resolution
+      return this.runMiddlewares(token, provider, stack, () => {
+        const result = this.instantiate(provider, stack);
+        this.maybeCache(token, provider, result);
+
+        if (this.hooks.hasListeners) {
+          this.hooks.emit({ type: 'create', token, instance: result });
+          this.hooks.emit({ type: 'resolve', token, instance: result });
+        }
+        return result;
+      });
     } finally {
       stack.delete(token);
     }
@@ -340,7 +387,7 @@ export class DIContainer {
         if (designType && typeof designType === 'function' && this.has(designType)) {
           try {
             (instance as any)[key] = this.resolve(designType, stack);
-          } catch {}
+          } catch { }
         }
       }
     }

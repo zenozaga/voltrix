@@ -16,11 +16,23 @@ export interface IRequest {
   
   // High-level multipart helper
   parseMultipart(onPart: (part: any) => void | Promise<void>): Promise<void>;
+
+  /**
+   * Custom context for middleware data storage.
+   * Reset on every request.
+   */
+  context: Record<string, any>;
 }
 
 export interface IResponse {
   readonly headersSent: boolean;
   readonly isAborted: boolean;
+
+  /**
+   * Data intended for templates or next middleware.
+   * Reset on every request.
+   */
+  locals: Record<string, any>;
 
   json(data: any): void;
   send(data: string): void;
