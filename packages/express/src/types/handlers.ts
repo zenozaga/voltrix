@@ -48,3 +48,6 @@ export interface RoutingMethods {
   any(pattern: string, ...handlers: HandlerFunction[]): this;
   ws(pattern: string, behavior: WebSocketBehavior<any>): this;
 }
+
+export type TransformerCtx = { schema: any; data: any; type: string; key?: string };
+export type TransformerFn = (ctx: TransformerCtx) => any | Promise<any>;

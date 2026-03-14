@@ -3,8 +3,8 @@
  */
 
 import { DecoratorFactory } from '../__internal/decorator-factory.js';
-import type { IRequest } from '@voltrix/express';
-import type { Constructor } from '../__internal/metadata-registry.js';
+import { MetadataRegistry } from '../__internal/metadata-registry.js';
+import type { Middleware, IRequest, Constructor } from '@voltrix/core';
 
 export type TransformFn<T = any, R = any> = (data: T, request: IRequest) => R | Promise<R>;
 
@@ -19,13 +19,15 @@ export type TransformFn<T = any, R = any> = (data: T, request: IRequest) => R | 
 function createParamDecorator(type: string) {
   return (keyOrSchema?: string | Constructor | any, transform?: TransformFn) => {
     const isKey = typeof keyOrSchema === 'string';
+    const isOptions = !isKey && keyOrSchema && typeof keyOrSchema === 'object' && !MetadataRegistry.get(keyOrSchema as any);
+
     return DecoratorFactory.create({
       type: 'parameter',
       value: {
         type,
-        key: isKey ? keyOrSchema : undefined,
-        schema: isKey ? undefined : keyOrSchema,
-        transform: transform,
+        key: isKey ? keyOrSchema : (isOptions ? keyOrSchema.key : undefined),
+        schema: isKey ? undefined : (isOptions ? keyOrSchema.schema : keyOrSchema),
+        transform: transform || (isOptions ? keyOrSchema.transform : undefined),
       }
     });
   };

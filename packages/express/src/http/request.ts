@@ -56,6 +56,36 @@ export class Request implements IRequest {
     this.context = {};
     this.dataListeners = [];
     this.dataConsuming = false;
+    this.accumulatedChunks = [];
+    this.streamFinished = false;
+
+    // uWS Gotcha: Start consuming data immediately if there's a body
+    const cl = this.request.getHeader('content-length');
+    if (cl && cl !== '0') {
+      this.ensureDataStarted();
+    }
+  }
+
+  private ensureDataStarted(): void {
+    if (this.dataConsuming) return;
+    this.dataConsuming = true;
+
+    this.response.onData((ab, isLast) => {
+      const chunk = new Uint8Array(ab);
+      const copy = new Uint8Array(chunk.length);
+      copy.set(chunk);
+
+      this.accumulatedChunks.push(copy);
+
+      for (const listener of this.dataListeners) {
+        listener(copy, isLast);
+      }
+
+      if (isLast) {
+        this.streamFinished = true;
+        this.dataListeners = [];
+      }
+    });
   }
 
   public context!: Record<string, any>;
@@ -98,7 +128,6 @@ export class Request implements IRequest {
 
   async body(): Promise<string> {
     if (this.cachedBody) return this.cachedBody;
-
     const buf = await this.buffer();
     return (this.cachedBody = buf.toString('utf8'));
   }
@@ -107,27 +136,11 @@ export class Request implements IRequest {
     if (this.cachedJSON) return this.cachedJSON;
 
     const buf = await this.buffer();
+    if (buf.length === 0) return undefined as unknown as T;
 
-    // Convert to JSON-like structure from Buffer
-    const { data } = buf.toJSON();
-
-
-    // ------------------------------------------------------------
-    // STRICT JSON VALIDATION (FAST: check only 1 byte)
-    // ------------------------------------------------------------
-    //
-    // 0x7B = '{'
-    // 0x5B = '['
-    //
-    if (data.length === 0 || (data[0] !== 0x7b && data[0] !== 0x5b)) {
-      throw new Error("Invalid JSON: body does not start with '{' or '['");
-    }
-
-    // ------------------------------------------------------------
-    // Parse JSON
-    // ------------------------------------------------------------
     try {
-      return (this.cachedJSON = JSON.parse(Buffer.from(data) as unknown as string) as T);
+      this.cachedJSON = JSON.parse(buf.toString('utf8'));
+      return this.cachedJSON as T;
     } catch (e) {
       throw new Error('Invalid JSON: failed to parse body');
     }
@@ -195,11 +208,6 @@ export class Request implements IRequest {
   }
 
   onData(handler: (chunk: Uint8Array, isLast: boolean) => void): void {
-    if (this.cachedBuffer) {
-      handler(this.cachedBuffer, true);
-      return;
-    }
-
     if (this.streamFinished) {
       const full = Buffer.concat(this.accumulatedChunks);
       handler(full, true);
@@ -207,27 +215,7 @@ export class Request implements IRequest {
     }
 
     this.dataListeners.push(handler);
-
-    if (!this.dataConsuming) {
-      this.dataConsuming = true;
-      this.response.onData((ab, isLast) => {
-        const chunk = new Uint8Array(ab);
-        const copy = new Uint8Array(chunk.length);
-        copy.set(chunk);
-
-        this.accumulatedChunks.push(copy);
-
-        for (const listener of this.dataListeners) {
-          listener(copy, isLast);
-        }
-
-        if (isLast) {
-          this.streamFinished = true;
-          this.cachedBuffer = Buffer.concat(this.accumulatedChunks);
-          this.dataListeners = [];
-        }
-      });
-    }
+    this.ensureDataStarted();
   }
 
   async parseMultipart(onPart: (part: MultipartPart) => void | Promise<void>): Promise<void> {

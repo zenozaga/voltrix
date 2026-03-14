@@ -1,4 +1,4 @@
-import type { IRequest, IResponse } from '@voltrix/express';
+import { SecurityRegistry, type IRequest, type IResponse } from '@voltrix/core';
 import { DecoratorFactory } from '../__internal/decorator-factory.js';
 
 /**
@@ -6,11 +6,9 @@ import { DecoratorFactory } from '../__internal/decorator-factory.js';
  */
 
 export interface RoleOptions {
-  roles: string[];
+  roles: any[];
   onFail?: (req: IRequest, res: IResponse) => any;
 }
-
-const usedRoles = new Set<string>();
 
 /**
  * Marks a route or controller with required roles.
@@ -20,7 +18,7 @@ export function Role(optionsOrFirstRole: string | RoleOptions, ...remainingRoles
     ? { roles: [optionsOrFirstRole, ...remainingRoles] }
     : optionsOrFirstRole;
 
-  options.roles.forEach(r => usedRoles.add(r));
+  SecurityRegistry.registerRoles(options.roles);
 
   return DecoratorFactory.create({
     type: 'custom',
@@ -32,7 +30,7 @@ export function Role(optionsOrFirstRole: string | RoleOptions, ...remainingRoles
 /**
  * Returns all unique roles used across the application.
  */
-Role.getAll = () => Array.from(usedRoles);
+Role.getAll = () => SecurityRegistry.getAllRoles();
 
 export function Public() {
   return DecoratorFactory.create({

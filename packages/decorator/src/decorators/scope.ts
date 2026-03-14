@@ -1,4 +1,4 @@
-import type { IRequest, IResponse } from '@voltrix/express';
+import { SecurityRegistry, type IRequest, type IResponse } from '@voltrix/core';
 import { DecoratorFactory } from '../__internal/decorator-factory.js';
 
 /**
@@ -6,11 +6,9 @@ import { DecoratorFactory } from '../__internal/decorator-factory.js';
  */
 
 export interface ScopeOptions {
-  scopes: string[];
+  scopes: any[];
   onFail?: (req: IRequest, res: IResponse) => any;
 }
-
-const usedScopes = new Set<string>();
 
 /**
  * Marks a route or controller with required scopes.
@@ -24,7 +22,10 @@ export function Scope(optionsOrFirstScope: string | ScopeOptions, ...remainingSc
     : optionsOrFirstScope;
 
   // Track scopes for auditing
-  options.scopes.forEach(s => usedScopes.add(s));
+  if (typeof process !== 'undefined') {
+    process.stderr.write(`--- DECORATOR: Calling registerScopes for ${JSON.stringify(options.scopes)}\n`);
+  }
+  SecurityRegistry.registerScopes(options.scopes);
 
   return DecoratorFactory.create({
     type: 'custom',
@@ -36,4 +37,4 @@ export function Scope(optionsOrFirstScope: string | ScopeOptions, ...remainingSc
 /**
  * Returns all unique scopes used across the application.
  */
-Scope.getAll = () => Array.from(usedScopes);
+Scope.getAll = () => SecurityRegistry.getAllScopes();

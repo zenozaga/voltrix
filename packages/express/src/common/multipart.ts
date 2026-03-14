@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import type { IRequest } from '../types/http.js';
 
 export interface MultipartPart {
@@ -148,17 +149,7 @@ export class MultipartParser {
   }
 
   private indexOf(haystack: Uint8Array, needle: Uint8Array, offset: number): number {
-    for (let i = offset; i <= haystack.length - needle.length; i++) {
-        let match = true;
-        for (let j = 0; j < needle.length; j++) {
-            if (haystack[i + j] !== needle[j]) {
-                match = false;
-                break;
-            }
-        }
-        if (match) return i;
-    }
-    return -1;
+    return Buffer.from(haystack).indexOf(needle, offset);
   }
 
   private parseHeaders(raw: string): Record<string, string> {

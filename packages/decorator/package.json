@@ -36,6 +36,7 @@
   "author": "Voltrix Team",
   "license": "MIT",
   "dependencies": {
+    "@voltrix/core": "workspace:*",
     "@voltrix/express": "workspace:*",
     "@voltrix/injector": "workspace:*",
     "reflect-metadata": "^0.2.2",

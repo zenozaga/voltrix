@@ -1,8 +1,7 @@
-export type AbstractConstructor<T = any> = abstract new (...args: any[]) => T;
-export type Constructor<T = any> = new (...args: any[]) => T;
-export type Token<T = any> = symbol | string | Constructor<T> | AbstractConstructor<T>;
+import type { Constructor, AbstractConstructor, Token, ProviderScope } from '@voltrix/core';
 
-export type Scope = 'singleton' | 'transient' | 'scoped';
+export type { Constructor, AbstractConstructor, Token };
+export type Scope = ProviderScope;
 
 export interface BaseProvider<T = unknown> {
   token?: Token<T>;

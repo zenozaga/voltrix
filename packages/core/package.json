@@ -1,0 +1,47 @@
+{
+  "name": "@voltrix/core",
+  "version": "0.1.0",
+  "description": "Core interfaces and shared types for Voltrix framework",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": [
+    "voltrix",
+    "core",
+    "interfaces",
+    "types"
+  ],
+  "author": "Voltrix Team",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@voltrix/core": "file:"
+  }
+}

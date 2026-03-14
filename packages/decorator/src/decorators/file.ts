@@ -1,5 +1,5 @@
 import { DecoratorFactory } from '../__internal/decorator-factory.js';
-import type { IRequest } from '@voltrix/express';
+import type { IRequest } from '@voltrix/core';
 
 /**
  * 🚀 File Decorator
@@ -25,17 +25,18 @@ export function File(optionsOrName: string | FileOptions) {
       type: 'custom',
       name: 'file',
       transform: async (req: IRequest) => {
+         
          // 📦 Lazy Multipart Parsing
          if (!req.context._filesParsed) {
            req.context.files = {};
            try {
-             await req.parseMultipart((part) => {
+             await (req as any).parseMultipart((part: any) => {
                if (part.filename) {
                   req.context.files![part.name] = part;
                }
              });
              req.context._filesParsed = true;
-           } catch (e) {
+           } catch (e: any) {
              // Not a multipart request or parsing failed
              req.context._filesParsed = true; 
            }

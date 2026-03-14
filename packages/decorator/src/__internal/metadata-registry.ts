@@ -1,6 +1,5 @@
-import type { Provider, Token } from '@voltrix/injector';
-
-export type Constructor<T = any> = new (...args: any[]) => T;
+import type { Provider, Token, Constructor } from '@voltrix/core';
+export type { Provider, Token, Constructor }
 
 /**
  * 📝 Metadata for a single route parameter
@@ -99,18 +98,5 @@ export const MetadataRegistry = {
    */
   get(target: Constructor): MetadataBag | undefined {
     return registry.get(target);
-  },
-
-  /**
-   * Global Transformer Hook
-   */
-  _transformer: (ctx: { schema: any; data: any; type: string; key?: string }): any => ctx.data,
-
-  setTransformer(fn: (ctx: { schema: any; data: any; type: string; key?: string }) => any) {
-    this._transformer = fn;
-  },
-
-  runTransform(schema: any, data: any, type: string, key?: string): any {
-    return this._transformer({ schema, data, type, key });
   }
 };

@@ -1,44 +1,11 @@
-export interface IRequest {
-  readonly method: string;
-  readonly url: string;
-  params: Record<string, string>;
-  query: Record<string, any>;
+import { IRequest as CoreRequest, IResponse as CoreResponse } from '@voltrix/core';
 
-  buffer(): Promise<Uint8Array>;
-  body(): Promise<string>;
-  json<T = any>(): Promise<T>;
-  onData(handler: (chunk: Uint8Array, isLast: boolean) => void): void;
-
-  header(name: string): string | undefined;
-  headers(): Record<string, string>;
-  getParam(name: string): string | undefined;
-  getQuery(name: string): any;
-  
+export interface IRequest extends CoreRequest {
   // High-level multipart helper
   parseMultipart(onPart: (part: any) => void | Promise<void>): Promise<void>;
-
-  /**
-   * Custom context for middleware data storage.
-   * Reset on every request.
-   */
-  context: Record<string, any>;
 }
 
-export interface IResponse {
-  readonly headersSent: boolean;
-  readonly isAborted: boolean;
-
-  /**
-   * Data intended for templates or next middleware.
-   * Reset on every request.
-   */
-  locals: Record<string, any>;
-
-  json(data: any): void;
-  send(data: string): void;
-  status(code: number): IResponse;
-  type(contentType: string): IResponse;
-  end(data?: string | Uint8Array): void;
+export interface IResponse extends CoreResponse {
   redirect(url: string, status?: number): void;
   sendBuffer(data: ArrayBuffer | Buffer): void;
   sendFile(path: string): Promise<void>;

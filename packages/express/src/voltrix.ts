@@ -41,6 +41,8 @@ export class Voltrix extends Renderer {
   private readonly handlerCache: LRUCache<CompiledHandler>;
   private readonly routeCache: RouteLRUCache;
 
+  private _transformers: Handlers.TransformerFn[] = [];
+
   private globalMiddlewares: Handlers.Middleware[] = [];
   private errorHandlers: Handlers.ErrorMiddleware[] = [];
 
@@ -104,6 +106,30 @@ export class Voltrix extends Renderer {
   useError(handler: Handlers.ErrorMiddleware): this {
     this.errorHandlers.push(handler);
     return this;
+  }
+
+  /**
+   * Register global parameter transformer.
+   */
+  useTransformer(fn: Handlers.TransformerFn): this {
+    this._transformers.push(fn);
+    return this;
+  }
+
+  /**
+   * Internal method to run transformation.
+   */
+  /**
+   * Internal method to run transformation.
+   */
+  async runTransform(schema: any, data: any, type: string, key?: string): Promise<any> {
+    if (this._transformers.length === 0) return data;
+
+    let current = data;
+    for (const fn of this._transformers) {
+      current = await fn({ schema, data: current, type, key });
+    }
+    return current;
   }
 
   /**
