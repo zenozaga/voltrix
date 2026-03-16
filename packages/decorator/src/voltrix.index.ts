@@ -19,9 +19,6 @@ export * from './extensions/request.extensions.js';
 export * from './processors/application.processor.js';
 export { DiscoveryCollector } from './processors/discovery.collector.js';
 
-// OpenAPI decorators
-export * from './decorators/openapi.js';
-
 // Helpers and creators
 export {
   createCustomRequestDecorator,

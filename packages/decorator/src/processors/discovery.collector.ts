@@ -1,5 +1,6 @@
+import 'reflect-metadata';
 import { MetadataRegistry } from '../__internal/metadata-registry.js';
-import { Constructor, AppTree, ModuleNode, ControllerNode, SecurityRegistry } from '@voltrix/core';
+import { Constructor, AppTree, ModuleNode, ControllerNode, SecurityRegistry, Metadata } from '@voltrix/core';
 
 /**
  * 🌳 Discovery Context for Hierarchical Propagation
@@ -84,7 +85,7 @@ export const DiscoveryCollector = {
       meta: { 
         ...bag.options, 
         context: modContext,
-        openapi: bag.custom.get('@@global')?.get('voltrix:openapi') || {}
+        openapi: Metadata.prefix('openapi').get(Mod)
       }
     };
 
@@ -139,7 +140,7 @@ export const DiscoveryCollector = {
       meta: { 
         ...bag.options, 
         context: ctrlContext,
-        openapi: bag.custom.get('@@global')?.get('voltrix:openapi') || {}
+        openapi: Metadata.prefix('openapi').get(Ctrl)
       }
     };
 
@@ -162,7 +163,15 @@ export const DiscoveryCollector = {
         onFail: routeScopes?.onFail || routeRoles?.onFail || ctrlContext.onFail
       };
 
-      const routeOpenApi = bag.custom.get(key)?.get('voltrix:openapi') || {};
+      const routeOpenApi = Metadata.prefix('openapi').get(Ctrl.prototype, key);
+      
+      // Automatic return type inference (stored in meta for the assembler)
+      if (!routeOpenApi.responses) {
+        const returnType = Reflect.getMetadata('design:returntype', Ctrl.prototype, key);
+        if (returnType) {
+          routeOpenApi.inferredResponse = returnType;
+        }
+      }
       
       // Inherit controller namespace if route doesn't have one
       if (node.meta.openapi.namespace && !routeOpenApi.namespace) {

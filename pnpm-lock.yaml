@@ -111,9 +111,9 @@ importers:
 
   packages/core:
     dependencies:
-      '@voltrix/core':
-        specifier: 'file:'
-        version: file:packages/core
+      reflect-metadata:
+        specifier: ^0.2.2
+        version: 0.2.2
     devDependencies:
       typescript:
         specifier: 5.9.3
@@ -208,7 +208,13 @@ importers:
       '@voltrix/express':
         specifier: workspace:*
         version: link:../express
+      reflect-metadata:
+        specifier: ^0.2.2
+        version: 0.2.2
     devDependencies:
+      '@voltrix/decorator':
+        specifier: workspace:*
+        version: link:../decorator
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -4725,12 +4731,6 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
     dev: true
-
-  file:packages/core:
-    resolution: {directory: packages/core, type: directory}
-    name: '@voltrix/core'
-    engines: {node: '>=18.0.0'}
-    dev: false
 
   github.com/uNetworking/uWebSockets.js/6609a88ffa9a16ac5158046761356ce03250a0df:
     resolution: {tarball: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/6609a88ffa9a16ac5158046761356ce03250a0df}

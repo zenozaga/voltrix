@@ -12,13 +12,14 @@ export * from './processors/discovery.collector.js';
 
 // Internal Utilities (Internal usage/Plugin developers)
 export { MetadataRegistry, type MetadataBag } from './__internal/metadata-registry.js';
+export { Metadata } from '@voltrix/core';
 export { DecoratorFactory, type DecoratorConfig, type DecoratorType } from './__internal/decorator-factory.js';
 
 // Re-exports for unified API
-export { 
-  type AbstractConstructor, 
-  type Constructor, 
-  type Token, 
+export {
+  type AbstractConstructor,
+  type Constructor,
+  type Token,
   type ProviderScope,
   type BaseProvider,
   type ClassProvider,

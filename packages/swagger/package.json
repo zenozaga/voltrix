@@ -9,8 +9,15 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "import": "./dist/index.js"
+    },
+    "./decorator": {
+      "types": "./dist/decorator/index.d.ts",
+      "import": "./dist/decorator/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
     }
   },
   "scripts": {
@@ -30,11 +37,13 @@
     "access": "public"
   },
   "devDependencies": {
+    "@voltrix/decorator": "workspace:*",
     "typescript": "5.9.3",
     "vitest": "^4.1.0"
   },
   "dependencies": {
     "@voltrix/core": "workspace:*",
-    "@voltrix/express": "workspace:*"
+    "@voltrix/express": "workspace:*",
+    "reflect-metadata": "^0.2.2"
   }
 }

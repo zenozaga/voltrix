@@ -1,4 +1,4 @@
-import type { Provider, Token, Constructor } from '@voltrix/core';
+import { Metadata, type Provider, type Token, type Constructor } from '@voltrix/core';
 export type { Provider, Token, Constructor }
 
 /**
@@ -53,50 +53,41 @@ export interface MetadataBag {
 }
 
 /**
- * Global Registry using WeakMap to prevent memory leaks
- */
-const registry = new WeakMap<Constructor, MetadataBag>();
-
-/**
- * Discovery Index tracking all annotated classes (for tree construction)
- */
-const annotatedClasses = new Set<Constructor>();
-
-/**
  * High-performance Discovery Registry
+ * NOW STATELESS: Relying on @voltrix/core Unified Metadata System
  */
-export const MetadataRegistry = {
+const BAG_KEY = 'voltrix:bag';
+
+export class MetadataRegistry {
   /**
-   * Get or create a metadata bag for a constructor
+   * Get or create a metadata bag for a target
    */
-  getOrCreate(target: Constructor): MetadataBag {
-    let bag = registry.get(target);
-    if (!bag) {
-      bag = {
+  static getOrCreate(target: Constructor): MetadataBag {
+    const meta = Metadata.get(target);
+    if (!meta[BAG_KEY]) {
+      meta[BAG_KEY] = {
         target,
         options: {},
         routes: new Map(),
         parameters: new Map(),
         middlewares: new Map(),
-        custom: new Map()
+        custom: new Map(),
       };
-      registry.set(target, bag);
-      annotatedClasses.add(target);
     }
-    return bag;
-  },
-
-  /**
-   * Get all annotated classes in the system
-   */
-  getClasses(): Constructor[] {
-    return Array.from(annotatedClasses);
-  },
-
-  /**
-   * Get metadata bag for a constructor (readonly)
-   */
-  get(target: Constructor): MetadataBag | undefined {
-    return registry.get(target);
+    return meta[BAG_KEY];
   }
-};
+
+  /**
+   * Get an existing metadata bag
+   */
+  static get(target: Constructor): MetadataBag | undefined {
+    return Metadata.get(target)[BAG_KEY];
+  }
+
+  /**
+   * Get all annotated classes in the system from the global core index
+   */
+  static getClasses(): Constructor[] {
+    return Metadata.getTrackedClasses();
+  }
+}

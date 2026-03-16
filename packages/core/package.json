@@ -43,6 +43,6 @@
     "vitest": "^4.1.0"
   },
   "dependencies": {
-    "@voltrix/core": "file:"
+    "reflect-metadata": "^0.2.2"
   }
 }
