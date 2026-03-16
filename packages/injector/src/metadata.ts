@@ -1,5 +1,12 @@
 import type { Constructor, Token, AbstractConstructor } from './providers';
 
+type ClassLike<T = unknown> = Constructor<T> | AbstractConstructor<T>;
+type InjectedProp = {
+  key: string | symbol;
+  token: unknown;
+  optional?: boolean;
+};
+
 export const META = {
   INJECT: Symbol('__voltrix__inject'),
   INJECTABLE: Symbol('__voltrix__injectable'),
@@ -12,76 +19,65 @@ export const META = {
   TOKEN: Symbol('__voltrix__token'),
 } as const;
 
-const paramTypesCache: WeakMap<Constructor | AbstractConstructor, any[] | null> = new WeakMap();
+const paramTypesCache = new WeakMap<ClassLike, Token[] | null>();
+const injectTokensCache = new WeakMap<object, Token[] | undefined>();
+const injectPropsCache = new WeakMap<ClassLike, InjectedProp[] | undefined>();
 
-/**
- * Returns constructor parameter types using Reflect metadata.
- * Cached for faster subsequent calls.
- */
-export function getDesignParamTypes(target: Constructor | AbstractConstructor): any[] | null {
-  if (paramTypesCache.has(target)) return paramTypesCache.get(target)!;
+export function getDesignParamTypes(target: ClassLike): Token[] | null {
+  const cached = paramTypesCache.get(target);
+  if (cached !== undefined) return cached;
 
-  // Reflect metadata is always available after importing "reflect-metadata"
-  const result = Reflect.getMetadata('design:paramtypes', target) || null;
+  const result = (Reflect.getMetadata('design:paramtypes', target) as Token[] | undefined) ?? null;
   paramTypesCache.set(target, result);
-
-
   return result;
 }
 
-/**
- * Returns manually injected tokens defined by @Inject.
- */
-export function getInjectedTokens(proto: object): Token[] | undefined {
-  return Reflect.getOwnMetadata?.(META.INJECT_TOKENS, proto);
+export function getInjectedTokens(target: object): Token[] | undefined {
+  if (injectTokensCache.has(target)) {
+    return injectTokensCache.get(target);
+  }
+
+  const result = Reflect.getOwnMetadata(META.INJECT_TOKENS, target) as Token[] | undefined;
+  injectTokensCache.set(target, result);
+  return result;
 }
 
 export function getInjectedProps<T = unknown>(
   target: Constructor<T> | AbstractConstructor<T>
-): Array<{ key: string | symbol; token: unknown; optional?: boolean }> | undefined {
-  return Reflect.getOwnMetadata?.(META.INJECT_PROPS, target);
-}
-
-
-export function getInjectedOptional(
-  target: object,
-  index: number
-): boolean | undefined {
-  return Reflect.getOwnMetadata?.(META.INJECT_OPTIONAL, target, index.toString()) === true;
-}
-
-/**
- * Defines metadata safely.
- */
-export function defineMetadata(key: symbol, value: unknown, target: object) {
-  Reflect.defineMetadata?.(key, value, target);
-}
-
-/**
- * Gets metadata safely.
- */
-export function getMetadata<T = unknown>(key: symbol, target: object): T | undefined {
-  return Reflect.getMetadata?.(key, target) as T | undefined;
-}
-
-/**
- * Returns all metadata keys and values from a target.
- */
-export function getAllMetadata<T = unknown>(target: object): Map<symbol, T> {
-  const map = new Map<symbol, T>();
-  const keys: symbol[] = Reflect.getMetadataKeys?.(target) ?? [];
-  for (const key of keys) {
-    const value = Reflect.getMetadata?.(key, target) as T;
-    map.set(key, value);
+): InjectedProp[] | undefined {
+  if (injectPropsCache.has(target)) {
+    return injectPropsCache.get(target);
   }
-  return map;
+
+  const result = Reflect.getOwnMetadata(META.INJECT_PROPS, target) as InjectedProp[] | undefined;
+  injectPropsCache.set(target, result);
+  return result;
 }
 
-/**
- * Checks if metadata value equals the provided one.
- */
+export function getInjectedOptional(target: object, index: number): boolean {
+  return Reflect.getOwnMetadata(META.INJECT_OPTIONAL, target, String(index)) === true;
+}
+
+export function defineMetadata(key: symbol, value: unknown, target: object): void {
+  Reflect.defineMetadata(key, value, target);
+}
+
+export function getMetadata<T = unknown>(key: symbol, target: object): T | undefined {
+  return Reflect.getMetadata(key, target) as T | undefined;
+}
+
+export function getAllMetadata<T = unknown>(target: object): Map<symbol, T> {
+  const metadata = new Map<symbol, T>();
+  const keys = Reflect.getMetadataKeys(target) as symbol[];
+
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    metadata.set(key, Reflect.getMetadata(key, target) as T);
+  }
+
+  return metadata;
+}
+
 export function isMetadataEqual<T = unknown>(key: symbol, value: T, target: object): boolean {
-  const existing = getMetadata<T>(key, target);
-  if (existing === undefined) return false;
-  return JSON.stringify(existing) === JSON.stringify(value);
+  return Reflect.getMetadata(key, target) === value;
 }

@@ -4,13 +4,13 @@ import { MetadataRegistry, Constructor } from './metadata-registry.js';
 /**
  * Decorator types for categorization
  */
-export type DecoratorType = 
-  | 'application' 
-  | 'module' 
-  | 'controller' 
-  | 'route' 
-  | 'parameter' 
-  | 'middleware' 
+export type DecoratorType =
+  | 'application'
+  | 'module'
+  | 'controller'
+  | 'route'
+  | 'parameter'
+  | 'middleware'
   | 'custom';
 
 export interface DecoratorConfig {
@@ -28,7 +28,7 @@ export const DecoratorFactory = {
    * Create a standard decorator
    */
   create(config: DecoratorConfig) {
-    return (target: any, propertyKey?: string | symbol, parameterIndexOrDescriptor?: any) => {
+    return (target: any, propertyKey?: any, parameterIndexOrDescriptor?: any) => {
       // 🧊 Normalize target to Constructor
       const isClass = typeof target === 'function';
       const ctor: Constructor = isClass ? target : target.constructor;
@@ -43,7 +43,7 @@ export const DecoratorFactory = {
         case 'controller':
           bag.type = config.type;
           bag.options = { ...bag.options, ...config.value };
-          
+
           // 💉 Automatically mark as Injectable for the DI Container
           // This ensures constructor dependencies are discoverable
           Reflect.defineMetadata(META.INJECTABLE, true, ctor);
@@ -51,18 +51,18 @@ export const DecoratorFactory = {
 
         case 'route':
           if (!propertyKey) throw new Error('@Route must be applied to a method.');
-          bag.routes.set(propertyKey, { 
+          bag.routes.set(propertyKey, {
             propertyKey,
-            ...config.value 
+            ...config.value
           });
           break;
 
         case 'parameter':
           if (!propertyKey) throw new Error('@Parameter must be applied to a method parameter.');
           const params = bag.parameters.get(propertyKey) || [];
-          params.push({ 
-            index: parameterIndexOrDescriptor, 
-            ...config.value 
+          params.push({
+            index: parameterIndexOrDescriptor,
+            ...config.value
           });
           // Keep parameters sorted by index for O(1) resolving later
           bag.parameters.set(propertyKey, params.sort((a, b) => a.index - b.index));

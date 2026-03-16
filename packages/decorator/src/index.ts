@@ -15,5 +15,24 @@ export { MetadataRegistry, type MetadataBag } from './__internal/metadata-regist
 export { DecoratorFactory, type DecoratorConfig, type DecoratorType } from './__internal/decorator-factory.js';
 
 // Re-exports for unified API
-export * from '@voltrix/core';
+export { 
+  type AbstractConstructor, 
+  type Constructor, 
+  type Token, 
+  type ProviderScope,
+  type BaseProvider,
+  type ClassProvider,
+  type FactoryProvider,
+  type ValueProvider,
+  type ExistingProvider,
+  type Provider,
+  type AppTree,
+  type ModuleNode,
+  type ControllerNode,
+  type RouteNode,
+  type DiscoveryNode,
+  type IRequest,
+  type IResponse,
+  SecurityRegistry
+} from '@voltrix/core';
 export { Inject, Injectable, DIContainer } from '@voltrix/injector';

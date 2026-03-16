@@ -43,16 +43,31 @@ export class Request implements IRequest {
     this.routePattern = pattern;
     this.paramIndices = paramIndices;
     
-    this._method = method;
-    this._url = url;
+    this._method = method || request.getMethod().toUpperCase();
+    this._url = url || request.getUrl();
+    
+    // Capture headers synchronously
+    this._headers = {};
+    request.forEach((k, v) => (this._headers![k] = v));
+
+    const qs = request.getQuery();
+    this.cachedQuery = qs ? Request.queryParser(qs) : {};
 
     this.cachedBuffer = undefined;
     this.cachedBody = undefined;
     this.cachedJSON = undefined;
     this.detectedJSON = null;
     this.checkedJSON = false;
-    this.cachedQuery = undefined;
-    this.cachedParams = undefined;
+
+    // Capture parameters synchronously while request is valid
+    if (this.paramIndices) {
+      this.cachedParams = {};
+      for (const [name, index] of this.paramIndices.entries()) {
+        this.cachedParams[name] = request.getParameter(index) || '';
+      }
+    } else if (this.routePattern) {
+      this.cachedParams = Request.paramsParser(this.routePattern, this._url);
+    }
     this.context = {};
     this.dataListeners = [];
     this.dataConsuming = false;
@@ -60,7 +75,7 @@ export class Request implements IRequest {
     this.streamFinished = false;
 
     // uWS Gotcha: Start consuming data immediately if there's a body
-    const cl = this.request.getHeader('content-length');
+    const cl = this._headers['content-length'];
     if (cl && cl !== '0') {
       this.ensureDataStarted();
     }
@@ -93,6 +108,7 @@ export class Request implements IRequest {
   private response!: HttpResponse;
   private accumulatedChunks: Uint8Array[] = [];
   private streamFinished = false;
+  private _headers: Record<string, string> = {};
 
   // ================================================================
   // BUFFER → BODY → JSON  (High-performance implementation)
@@ -159,27 +175,19 @@ export class Request implements IRequest {
   }
 
   get method(): string {
-    return this._method ||= this.request.getMethod().toUpperCase();
+    return this._method!;
   }
 
   get url(): string {
-    return this._url ||= this.request.getUrl();
+    return this._url!;
   }
 
   get query(): Record<string, any> {
-    if (!this.cachedQuery) {
-      const qs = this.request.getQuery();
-      this.cachedQuery = qs ? Request.queryParser(qs) : {};
-    }
-    return this.cachedQuery;
+    return this.cachedQuery || {};
   }
 
   get params(): Record<string, string> {
-    if (!this.routePattern) return (this.cachedParams ||= {});
-    if (!this.cachedParams) {
-      this.cachedParams = Request.paramsParser(this.routePattern, this.url);
-    }
-    return this.cachedParams;
+    return this.cachedParams ||= {};
   }
 
   getQuery(name: string): any {
@@ -187,24 +195,15 @@ export class Request implements IRequest {
   }
 
   getParam(name: string): string | undefined {
-    // FAST PATH: Use native uWS parameter by index if available
-    if (this.paramIndices) {
-      const index = this.paramIndices.get(name);
-      if (index !== undefined) return this.request.getParameter(index);
-    }
-    
-    // Fallback to JS parsing (for non-precomputed routes)
     return this.params[name];
   }
 
   header(name: string): string {
-    return this.request.getHeader(name);
+    return this._headers[name.toLowerCase()] || this._headers[name];
   }
 
   headers(): Record<string, string> {
-    const result: Record<string, string> = {};
-    this.request.forEach((k, v) => (result[k] = v));
-    return result;
+    return this._headers;
   }
 
   onData(handler: (chunk: Uint8Array, isLast: boolean) => void): void {

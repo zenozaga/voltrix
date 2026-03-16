@@ -6,29 +6,43 @@ export class Hooks {
   private listeners: Hook[] = [];
 
   get hasListeners(): boolean {
-    return this.listeners.length > 0;
+    return this.listeners.length !== 0;
   }
 
-  on(h: Hook): () => void {
-    this.listeners.push(h);
+  on(listener: Hook): () => void {
+    this.listeners.push(listener);
+
+    let active = true;
+
     return () => {
-      const idx = this.listeners.indexOf(h);
-      if (idx >= 0) this.listeners.splice(idx, 1);
+      if (!active) return;
+      active = false;
+
+      const index = this.listeners.indexOf(listener);
+      if (index === -1) return;
+
+      const lastIndex = this.listeners.length - 1;
+      if (index !== lastIndex) {
+        this.listeners[index] = this.listeners[lastIndex];
+      }
+      this.listeners.pop();
     };
   }
 
-  emit(ev: HookEvent): void {
-    const arr = this.listeners;
-    const len = arr.length;
-    for (let i = 0; i < len; i++) {
+  emit(event: HookEvent): void {
+    const listeners = this.listeners;
+
+    for (let i = 0; i < listeners.length; i++) {
       try {
-        arr[i](ev);
-      } catch {}
+        listeners[i](event);
+      } catch {
+        // Ignore listener errors to avoid breaking the emitter flow.
+      }
     }
   }
 
   clear(): void {
-    this.listeners.length = 0;
+    this.listeners = [];
   }
 
   count(): number {

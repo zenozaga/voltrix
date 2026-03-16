@@ -15,6 +15,11 @@ export interface RouteConfig {
   pattern: string;
   handler: HandlerFunction;
   middlewares: Middleware[];
+  meta?: Record<string, any>;
+}
+
+export interface RouteBuilder {
+  meta(data: Record<string, any>): RouteBuilder;
 }
 
 export interface WsRouteConfig {
@@ -83,44 +88,72 @@ export class Router {
     method: string,
     pattern: string,
     handlers: (Middleware | HandlerFunction)[]
-  ): this {
+  ): RouteBuilder {
     const last = handlers.length - 1;
     const middlewares = last > 0 ? (handlers.slice(0, last) as Middleware[]) : [];
     const handler = handlers[last] as HandlerFunction;
-    this.routes.push({ method, pattern, handler, middlewares });
-    return this;
+    const config: RouteConfig = { method, pattern, handler, middlewares, meta: {} };
+    this.routes.push(config);
+
+    return {
+      meta: (data: Record<string, any>) => {
+        config.meta = { ...config.meta, ...data };
+        return this.addRoute(method, pattern, handlers); // Return same builder type (recursive-like but actually just a proxy)
+      }
+    };
   }
 
-  get(pattern: string, ...handlers: HandlerFunction[]): this {
-    return this.addRoute('GET', pattern, handlers);
+  // Refined addRoute to return a proper builder
+  private _addRoute(
+    method: string,
+    pattern: string,
+    handlers: (Middleware | HandlerFunction)[]
+  ): RouteBuilder {
+    const last = handlers.length - 1;
+    const middlewares = last > 0 ? (handlers.slice(0, last) as Middleware[]) : [];
+    const handler = handlers[last] as HandlerFunction;
+    const config: RouteConfig = { method, pattern, handler, middlewares, meta: {} };
+    this.routes.push(config);
+
+    const builder: RouteBuilder = {
+      meta: (data: Record<string, any>) => {
+        config.meta = { ...config.meta, ...data };
+        return builder;
+      }
+    };
+    return builder;
   }
 
-  post(pattern: string, ...handlers: HandlerFunction[]): this {
-    return this.addRoute('POST', pattern, handlers);
+  get(pattern: string, ...handlers: HandlerFunction[]): RouteBuilder {
+    return this._addRoute('GET', pattern, handlers);
   }
 
-  put(pattern: string, ...handlers: HandlerFunction[]): this {
-    return this.addRoute('PUT', pattern, handlers);
+  post(pattern: string, ...handlers: HandlerFunction[]): RouteBuilder {
+    return this._addRoute('POST', pattern, handlers);
   }
 
-  delete(pattern: string, ...handlers: HandlerFunction[]): this {
-    return this.addRoute('DELETE', pattern, handlers);
+  put(pattern: string, ...handlers: HandlerFunction[]): RouteBuilder {
+    return this._addRoute('PUT', pattern, handlers);
   }
 
-  patch(pattern: string, ...handlers: HandlerFunction[]): this {
-    return this.addRoute('PATCH', pattern, handlers);
+  delete(pattern: string, ...handlers: HandlerFunction[]): RouteBuilder {
+    return this._addRoute('DELETE', pattern, handlers);
   }
 
-  options(pattern: string, ...handlers: HandlerFunction[]): this {
-    return this.addRoute('OPTIONS', pattern, handlers);
+  patch(pattern: string, ...handlers: HandlerFunction[]): RouteBuilder {
+    return this._addRoute('PATCH', pattern, handlers);
   }
 
-  head(pattern: string, ...handlers: HandlerFunction[]): this {
-    return this.addRoute('HEAD', pattern, handlers);
+  options(pattern: string, ...handlers: HandlerFunction[]): RouteBuilder {
+    return this._addRoute('OPTIONS', pattern, handlers);
   }
 
-  any(pattern: string, ...handlers: HandlerFunction[]): this {
-    return this.addRoute('ANY', pattern, handlers);
+  head(pattern: string, ...handlers: HandlerFunction[]): RouteBuilder {
+    return this._addRoute('HEAD', pattern, handlers);
+  }
+
+  any(pattern: string, ...handlers: HandlerFunction[]): RouteBuilder {
+    return this._addRoute('ANY', pattern, handlers);
   }
 
   // ========================================
@@ -169,6 +202,7 @@ export class Router {
       allMiddlewares: Middleware[];
       errorHandlers: ErrorMiddleware[];
       paramIndices: Map<string, number>;
+      meta: Record<string, any>;
     }> = [];
 
     const inheritedMws = this.middlewares;
@@ -192,6 +226,7 @@ export class Router {
             : r.middlewares,
         errorHandlers: inheritedErrs,
         paramIndices: this.computeParamIndices(fullPattern),
+        meta: r.meta || {}
       });
     }
 

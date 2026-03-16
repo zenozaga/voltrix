@@ -1,7 +1,7 @@
 {
-  "name": "@voltrix/core",
+  "name": "@voltrix/swagger",
   "version": "0.1.0",
-  "description": "Core interfaces and shared types for Voltrix framework",
+  "description": "OpenAPI 3.0 generator for Voltrix framework",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -21,20 +21,11 @@
   },
   "keywords": [
     "voltrix",
-    "core",
-    "interfaces",
-    "types"
+    "swagger",
+    "openapi"
   ],
   "author": "Voltrix Team",
   "license": "MIT",
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
-  "engines": {
-    "node": ">=18.0.0"
-  },
   "publishConfig": {
     "access": "public"
   },
@@ -43,6 +34,7 @@
     "vitest": "^4.1.0"
   },
   "dependencies": {
-    "@voltrix/core": "file:"
+    "@voltrix/core": "workspace:*",
+    "@voltrix/express": "workspace:*"
   }
 }

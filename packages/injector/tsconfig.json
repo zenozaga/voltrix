@@ -1,8 +1,17 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Node",
     "outDir": "./dist",
     "rootDir": "./src",
+    "strict": false,
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": true,
+    "composite": false,
+    "incremental": false,
+    "noEmit": false,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "importHelpers": true
@@ -13,9 +22,8 @@
   "exclude": [
     "dist",
     "node_modules",
-    "test",
+    "tests",
     "**/*.test.ts",
     "**/*.spec.ts"
-  ],
-  "references": []
+  ]
 }

@@ -1,20 +1,28 @@
-import { MetadataRegistry, type MetadataBag } from '../__internal/metadata-registry.js';
+import { MetadataRegistry, type MetadataBag } from '../__internal/metadata-registry';
 import { DIContainer } from '@voltrix/injector';
 import { Voltrix } from '@voltrix/express';
-import { 
-  Constructor, 
-  AppTree, 
-  ModuleNode, 
-  ControllerNode, 
-  IRequest, 
-  IResponse 
+import {
+  Constructor,
+  AppTree,
+  ModuleNode,
+  ControllerNode,
+  IRequest,
+  IResponse
 } from '@voltrix/core';
-import { DiscoveryCollector, type ProcessorContext } from './discovery.collector.js';
+import { DiscoveryCollector, type ProcessorContext } from './discovery.collector';
+
+
+export interface VoltrixApplication {
+  app: Voltrix;
+  tree: AppTree;
+  container: DIContainer;
+  listen: (p?: number) => Promise<void>;
+}
 
 /**
  * 🚀 Voltrix Application Processor V2 (The Compiler)
  */
-export async function createApplication(appClass: Constructor) {
+export async function createApplication(appClass: Constructor): Promise<VoltrixApplication> {
   const container = new DIContainer();
   const bag = MetadataRegistry.getOrCreate(appClass);
 
@@ -36,7 +44,7 @@ export async function createApplication(appClass: Constructor) {
 
   // 2. Build Discovery Tree (The Helper)
   const tree = await DiscoveryCollector.buildTree(appClass);
-  
+
   // 3. Register Modules recursively into DI
   const registered = new Set<Constructor>();
   const registerModuleDI = (node: ModuleNode) => {
@@ -53,7 +61,7 @@ export async function createApplication(appClass: Constructor) {
     if (modBag.options.controllers) {
       modBag.options.controllers.forEach((c: any) => container.addProvider(c));
     }
-    
+
     node.subModules.forEach((sub: ModuleNode) => registerModuleDI(sub));
   };
   tree.modules.forEach((m: ModuleNode) => registerModuleDI(m));
@@ -73,7 +81,9 @@ export async function createApplication(appClass: Constructor) {
     app,
     tree,
     container,
-    listen: (p?: number) => app.listen(p || port)
+    listen: async (p?: number) => {
+      await app.listen(p || port);
+    }
   };
 }
 
@@ -177,7 +187,7 @@ async function registerControllerRoutes(node: ControllerNode, container: DIConta
         // 4. Resolve Params & Execute
         const args = await resolver(req, res);
         const result = await (instance as any)[route.propertyKey](...args);
-        
+
         if (result !== undefined) {
           if (typeof result === 'object' && result !== null) res.json(result);
           else res.send(String(result));

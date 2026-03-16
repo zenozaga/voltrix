@@ -17,22 +17,14 @@ export * from './extensions/request.extensions.js';
 
 // Application processor
 export * from './processors/application.processor.js';
+export { DiscoveryCollector } from './processors/discovery.collector.js';
+
+// OpenAPI decorators
+export * from './decorators/openapi.js';
 
 // Helpers and creators
-export { 
-  createRouteDecorator,
-  type RouteOptions,
-  type RouteInfo,
-  type RouterList 
-} from './__internal/creators/route.creator.js';
-
-export {
-  getDecorData
-} from './__internal/helpers/decorator.helper.js';
-
 export {
   createCustomRequestDecorator,
-  type ParameterInfo
 } from './decorators/parameter.js';
 
 // Legacy exports for compatibility

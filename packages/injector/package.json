@@ -2,6 +2,7 @@
   "name": "@voltrix/injector",
   "version": "0.1.0",
   "description": "Dependency injection container with decorator and reflect-metadata support for Voltrix framework",
+  "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -13,9 +14,11 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --out-dir dist --clean",
+    "build": "tsc -b",
     "dev": "tsc --watch",
-    "test": "npm run build && ts-node tests/container.test.ts",
+    "test": "vitest run",
+    "bench": "vitest bench",
+    "test:watch": "vitest",
     "type-check": "tsc --noEmit",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix"
@@ -33,9 +36,9 @@
   "author": "Voltrix Team",
   "license": "MIT",
   "dependencies": {
-    "@voltrix/core": "workspace:*",
+    "tslib": "^2.8.1",
     "reflect-metadata": "^0.2.2",
-    "tslib": "^2.8.1"
+    "@voltrix/core": "workspace:*"
   },
   "peerDependencies": {
     "typescript": ">=4.5.0"

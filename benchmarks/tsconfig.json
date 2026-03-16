@@ -1,13 +1,20 @@
 {
   "compilerOptions": {
-    "rootDir": "./src",
-    "outDir": "./dist",
+    "baseUrl": ".",
+    "paths": {
+      "@voltrix/decorator": ["../packages/decorator/src/index.ts"],
+      "@voltrix/express": ["../packages/express/src/index.ts"],
+      "@voltrix/injector": ["../packages/injector/src/index.ts"],
+      "@voltrix/core": ["../packages/core/src/index.ts"]
+    },
     "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "node",
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "strict": false
   
   },
-  "include": ["src/**/*", "example.ts"],
+  "include": ["src/**/*", "example.ts", "run-comparison.ts", "deco-server.ts", "comprehensive-comparison.ts", "read-results.ts"],
   "exclude": ["dist", "node_modules", "**/*.test.ts", "**/*.spec.ts"]
 }

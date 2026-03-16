@@ -2,7 +2,7 @@
  * 🔍 Debug test para entender el orden de middleware
  */
 
-import { App } from '../packages/express/dist/app.js';
+import { App } from '@voltrix/express';
 
 function debugMiddlewareOrder() {
   console.log('🔍 DEBUG: Orden de Middleware');
@@ -24,7 +24,7 @@ function debugMiddlewareOrder() {
 
   console.log('3. Registrando segundo middleware global...');
   app.use((req, res, next) => {
-    console.log('   🔵 Ejecutando: Global 2');  
+    console.log('   🔵 Ejecutando: Global 2');
     next();
   });
 
@@ -45,7 +45,7 @@ function debugMiddlewareOrder() {
     if (success) {
       console.log('\n🚀 Servidor iniciado en puerto 3013');
       console.log('\n🔍 Haciendo request a /api/test...');
-      
+
       setTimeout(async () => {
         try {
           await fetch('http://localhost:3013/api/test');

@@ -81,12 +81,21 @@ export const DiscoveryCollector = {
       fullPath,
       controllers: [],
       subModules: [],
-      meta: { ...bag.options, context: modContext }
+      meta: { 
+        ...bag.options, 
+        context: modContext,
+        openapi: bag.custom.get('@@global')?.get('voltrix:openapi') || {}
+      }
     };
 
     // 1. Process Controllers
     for (const Ctrl of controllers) {
-      node.controllers.push(this.processController(Ctrl as Constructor, fullPath, modContext));
+      const ctrlNode = this.processController(Ctrl as Constructor, fullPath, modContext);
+      // Inherit module namespace if controller doesn't have one
+      if (node.meta.openapi.namespace && !ctrlNode.meta.openapi.namespace) {
+        ctrlNode.meta.openapi.namespace = node.meta.openapi.namespace;
+      }
+      node.controllers.push(ctrlNode);
     }
 
     // 2. Process Sub-Modules
@@ -127,7 +136,11 @@ export const DiscoveryCollector = {
       target: Ctrl,
       fullPath,
       routes: [],
-      meta: { ...bag.options, context: ctrlContext }
+      meta: { 
+        ...bag.options, 
+        context: ctrlContext,
+        openapi: bag.custom.get('@@global')?.get('voltrix:openapi') || {}
+      }
     };
 
     // Process Routes
@@ -149,6 +162,13 @@ export const DiscoveryCollector = {
         onFail: routeScopes?.onFail || routeRoles?.onFail || ctrlContext.onFail
       };
 
+      const routeOpenApi = bag.custom.get(key)?.get('voltrix:openapi') || {};
+      
+      // Inherit controller namespace if route doesn't have one
+      if (node.meta.openapi.namespace && !routeOpenApi.namespace) {
+        routeOpenApi.namespace = node.meta.openapi.namespace;
+      }
+
       node.routes.push({
         target: Ctrl,
         propertyKey: key,
@@ -157,7 +177,8 @@ export const DiscoveryCollector = {
         meta: { 
           ...route, 
           parameters: bag.parameters.get(key),
-          context: routeContext
+          context: routeContext,
+          openapi: routeOpenApi
         }
       });
     }

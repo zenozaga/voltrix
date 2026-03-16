@@ -1,5 +1,6 @@
 import { bench, describe, it, expect } from 'vitest';
 import { DIContainer } from '../src/container';
+
 import { Injectable, Singleton, Transient } from '../src/decorators';
 
 describe('DIContainer Performance', () => {

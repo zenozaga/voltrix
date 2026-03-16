@@ -1,7 +1,7 @@
 import * as UWS from 'uWebSockets.js';
 import type * as Handlers from './types/handlers.js';
 
-import { Router } from './router.js';
+import { Router, type RouteBuilder } from './router.js';
 import { LRUCache } from './common/lru-cache.js';
 import { RouteLRUCache } from './common/route-cache.js';
 
@@ -144,37 +144,45 @@ export class Voltrix extends Renderer {
   // HTTP Registration (single entry point)
   // =======================================
 
-  private register(method: string, pattern: string, handler: Handlers.HandlerFunction): this {
+  private register(method: string, pattern: string, handler: Handlers.HandlerFunction): RouteBuilder {
+    const meta: Record<string, any> = {};
     const compiled = (res: UWS.HttpResponse, req: UWS.HttpRequest) => {
       this.handleRequest(pattern, req, res, handler, undefined, true);
     };
 
     (this.uws as any)[method](pattern, compiled);
-    return this;
+    
+    const builder: RouteBuilder = {
+      meta: (data: Record<string, any>) => {
+        Object.assign(meta, data);
+        return builder;
+      }
+    };
+    return builder;
   }
 
-  get(pattern: string, handler: Handlers.HandlerFunction) {
+  get(pattern: string, handler: Handlers.HandlerFunction): RouteBuilder {
     return this.register('get', pattern, handler);
   }
-  post(pattern: string, handler: Handlers.HandlerFunction) {
+  post(pattern: string, handler: Handlers.HandlerFunction): RouteBuilder {
     return this.register('post', pattern, handler);
   }
-  put(pattern: string, handler: Handlers.HandlerFunction) {
+  put(pattern: string, handler: Handlers.HandlerFunction): RouteBuilder {
     return this.register('put', pattern, handler);
   }
-  delete(pattern: string, handler: Handlers.HandlerFunction) {
+  delete(pattern: string, handler: Handlers.HandlerFunction): RouteBuilder {
     return this.register('del', pattern, handler);
   }
-  patch(pattern: string, handler: Handlers.HandlerFunction) {
+  patch(pattern: string, handler: Handlers.HandlerFunction): RouteBuilder {
     return this.register('patch', pattern, handler);
   }
-  options(pattern: string, handler: Handlers.HandlerFunction) {
+  options(pattern: string, handler: Handlers.HandlerFunction): RouteBuilder {
     return this.register('options', pattern, handler);
   }
-  head(pattern: string, handler: Handlers.HandlerFunction) {
+  head(pattern: string, handler: Handlers.HandlerFunction): RouteBuilder {
     return this.register('head', pattern, handler);
   }
-  any(pattern: string, handler: Handlers.HandlerFunction) {
+  any(pattern: string, handler: Handlers.HandlerFunction): RouteBuilder {
     return this.register('any', pattern, handler);
   }
 

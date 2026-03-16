@@ -1,4 +1,12 @@
 import 'reflect-metadata';
+import {
+  ProviderNotFoundError,
+  CircularDependencyError,
+  InvalidProviderError,
+} from './errors';
+import { InjectableStore } from './utils/injectable-store';
+import { Hooks } from './hooks';
+
 import type {
   Provider,
   Token,
@@ -9,7 +17,7 @@ import type {
   FactoryProvider,
   AbstractConstructor,
 } from './providers';
-import { ProviderNotFoundError, CircularDependencyError, InvalidProviderError } from './errors';
+
 import {
   META,
   getDesignParamTypes,
@@ -18,35 +26,42 @@ import {
   getMetadata,
   getInjectedOptional,
 } from './metadata';
-import { Hooks } from './hooks';
-import { InjectableStore } from './utils/injectable-store';
 
-type FactoryFn<T = any> = (...args: any[]) => T;
-export const aSymbols = META;
-
+type FactoryFn<T = unknown> = (args: unknown[]) => T;
 type InstanceRecord = { value: unknown; expiresAt?: number };
-const DISPOSERS = ['dispose', 'destroy', 'close'] as const;
 
-type MiddlewareContext<T = any> = {
+type MiddlewareContext<T = unknown> = {
   token: Token<T>;
   provider?: Provider<T> | null;
   container: DIContainer;
   next: () => T;
 };
-type MiddlewareFn<T = any> = (ctx: MiddlewareContext<T>) => T;
 
-/**
- * ⚡ Voltrix DIContainer — High-performance Dependency Injection Container
- * 
- */
+type MiddlewareFn<T = unknown> = (ctx: MiddlewareContext<T>) => T;
+
+type CachedClassData<T = unknown> = {
+  deps: Token[];
+  factory: FactoryFn<T>;
+  propInjections: Array<{ key: PropertyKey; token: Token; optional?: boolean }>;
+  propInjectionKeys: Set<PropertyKey>;
+  autoInjectKeys: PropertyKey[];
+};
+
+const DISPOSERS = ['dispose', 'destroy', 'close'] as const;
+
+export const aSymbols = META;
+
 export class DIContainer {
   private readonly providers = new Map<Token, Provider>();
   private readonly instances = new Map<Token, InstanceRecord>();
   private readonly hooks = new Hooks();
-  private readonly middlewares: MiddlewareFn[] = []; // ✅ Middlewares síncronos
+  private readonly middlewares: MiddlewareFn[] = [];
   private readonly opts: Required<ContainerOptions>;
-  private readonly resolvers = {} as Record<ProviderKind, ProviderResolver>;
+  private readonly resolvers: Record<ProviderKind, ProviderResolver>;
   private hasMiddleware = false;
+
+  private static _global?: DIContainer;
+  private static readonly classCache = new WeakMap<Function, CachedClassData>();
 
   constructor(
     private readonly parent?: DIContainer,
@@ -56,36 +71,28 @@ export class DIContainer {
       autoInject: opts.autoInject ?? true,
       defaultScope: opts.defaultScope ?? 'singleton',
       defaultTimeoutMs: opts.defaultTimeoutMs ?? 0,
-    } as Required<ContainerOptions>;
+    };
 
-    this.resolvers['class'] = this.instantiateClass.bind(this) as any;
-    this.resolvers['factory'] = this.instantiateFactory.bind(this) as any;
-    this.resolvers['value'] = this.instantiateValue.bind(this) as any;
-    this.resolvers['existing'] = this.instantiateExisting.bind(this) as any;
+    this.resolvers = {
+      class: this.instantiateClass.bind(this) as ProviderResolver,
+      factory: this.instantiateFactory.bind(this) as ProviderResolver,
+      value: this.instantiateValue.bind(this) as ProviderResolver,
+      existing: this.instantiateExisting.bind(this) as ProviderResolver,
+    };
   }
-
-  private static _global?: DIContainer;
 
   static get global(): DIContainer {
     if (!this._global) this._global = new DIContainer();
     return this._global;
   }
 
-  ////////////////////////////
-  /// Creation & Hierarchy
-  ////////////////////////////
-
-  static create(opts?: ContainerOptions) {
+  static create(opts?: ContainerOptions): DIContainer {
     return new DIContainer(undefined, opts);
   }
 
   createChild(opts?: ContainerOptions): DIContainer {
     return new DIContainer(this, opts ?? this.opts);
   }
-
-  ////////////////////////////
-  /// Hooks
-  ////////////////////////////
 
   on(
     handler: (ev: {
@@ -97,82 +104,65 @@ export class DIContainer {
     return this.hooks.on(handler);
   }
 
-  ////////////////////////////
-  /// Middlewares
-  ////////////////////////////
-
   use(fn: MiddlewareFn): void {
     this.middlewares.push(fn);
-    this.hasMiddleware = true;
+    this.hasMiddleware = this.middlewares.length > 0;
   }
-
-  private runMiddlewares<T>(
-    token: Token<T>,
-    provider: Provider<T> | null,
-    stack: Set<Token>,
-    resolver: () => T
-  ): T {
-    let index = -1;
-
-    const execute = (i: number): T => {
-      if (i <= index) throw new Error('next() llamado más de una vez en middleware');
-      index = i;
-      const mw = this.middlewares[i];
-      if (!mw) return resolver();
-      const ctx: MiddlewareContext<T> = {
-        token,
-        provider,
-        container: this,
-        next: () => execute(i + 1),
-      };
-      return mw(ctx);
-    };
-
-    return execute(0);
-  }
-
-  ////////////////////////////
-  /// Provider Registration
-  ////////////////////////////
 
   register<T>(provider: Omit<Provider<T>, 'kind'>): void {
     const token = provider.token ?? provider.provide;
-    if (!token) throw new InvalidProviderError('Provider must define a token or provide property');
-
-    const kind =
-      'useClass' in provider
-        ? 'class'
-        : 'useFactory' in provider
-          ? 'factory'
-          : 'useValue' in provider
-            ? 'value'
-            : ('useExisting' in provider || (provider as any).useToken)
-              ? 'existing'
-              : undefined;
-
-
-    if (!kind)
-      throw new InvalidProviderError(`Invalid provider configuration for ${String(token)}`);
-
-    const _provider = { ...provider, kind, token } as Provider<T>;
-    if (kind === 'existing') {
-      (_provider as any).useExisting = (provider as any).useExisting ?? (provider as any).useToken;
+    if (!token) {
+      throw new InvalidProviderError('Provider must define a token or provide property');
     }
 
+    const kind = this.detectProviderKind(provider);
+    if (!kind) {
+      throw new InvalidProviderError(`Invalid provider configuration for ${this.tokenToString(token)}`);
+    }
 
-    const target = (provider as any).useClass as Constructor<T> | undefined;
-    if (target) this.applyMetadata(target, _provider);
+    const normalized = { ...provider, kind, token } as Provider<T>;
 
-    this.providers.set(token, _provider);
+    if (kind === 'existing') {
+      (normalized as Provider<T>).useExisting =
+        (provider as Provider<T>).useExisting ?? (provider as { useToken?: Token<T> }).useToken;
+    }
+
+    const target = (provider as Provider<T>).useClass as Constructor<T> | undefined;
+    if (target) {
+      this.applyMetadata(target, normalized);
+      this.prepareClassProvider(normalized, target);
+    }
+
+    if (kind === 'factory') {
+      this.prepareFactoryProvider(normalized as FactoryProvider<T>);
+    }
+
+    this.providers.set(token, normalized);
   }
 
-  registerMany(providers: (Constructor | AbstractConstructor)[]): void {
-    for (const provider of providers) this.register({ token: provider, useClass: provider as any });
+  registerMany(
+    providers: Array<Constructor | AbstractConstructor | Omit<Provider<unknown>, 'kind'>>
+  ): void {
+    for (const provider of providers) {
+      if (typeof provider === 'function') {
+        this.register({ token: provider, useClass: provider as Constructor });
+      } else {
+        this.register(provider);
+      }
+    }
   }
 
-  /**
-   * Alias for resolve.
-   */
+  addProvider<T>(provider: Constructor<T> | Omit<Provider<T>, 'kind'> | null | undefined): void {
+    if (!provider) return;
+
+    if (typeof provider === 'function') {
+      this.register({ token: provider, useClass: provider });
+      return;
+    }
+
+    this.register(provider);
+  }
+
   get<T>(token: Token<T>): T {
     return this.resolve(token);
   }
@@ -181,141 +171,173 @@ export class DIContainer {
     return this.providers.has(token) || !!this.parent?.has(token);
   }
 
-  ////////////////////////////
-  /// Resolution (con middleware síncrono)
-  ////////////////////////////
-
   resolve<T>(token: Token<T>, stack?: Set<Token>): T {
     const cached = this.instances.get(token);
+    if (cached && !this.isExpired(cached)) {
+      return this.emitResolveIfNeeded(token, cached.value as T);
+    }
+
     if (cached) {
-      if (cached.expiresAt === undefined || Date.now() < cached.expiresAt) {
-        const val = cached.value as T;
-        if (this.hooks.hasListeners) {
-          this.hooks.emit({ type: 'resolve', token, instance: val });
-        }
-        return val;
-      }
       this.instances.delete(token);
     }
 
-    if (!stack) stack = new Set();
+    this.ensureAutoProvider(token);
 
-    if (!this.providers.has(token)) {
-      const impl = InjectableStore.getImplementation(token);
-      if (impl) {
-        this.register({ token, useClass: impl });
-      } else if (InjectableStore.has(token)) {
-        this.register({ token, useClass: token as any });
-      }
+    const provider = this.providers.get(token) as Provider<T> | undefined;
+    if (!provider) {
+      if (this.parent) return this.parent.resolve(token, stack);
+      throw new ProviderNotFoundError(`No provider found for ${this.tokenToString(token)}`);
     }
 
-    const provider = this.getProviderOrThrow(token, stack);
-    if (!provider) return this.parent!.resolve(token, stack);
+    const activeStack = stack ?? new Set<Token>();
+    if (activeStack.has(token)) {
+      throw this.circularError(token, activeStack);
+    }
 
-    if (stack.has(token)) throw this.circularError(token, stack);
-    stack.add(token);
+    activeStack.add(token);
 
     try {
-      // Fast path: skip middleware if not present
-      if (!this.hasMiddleware) {
-        const result = this.instantiate(provider, stack);
-        this.maybeCache(token, provider, result);
+      const createInstance = (): T => {
+        const instance = this.instantiate(provider, activeStack);
+        this.maybeCache(token, provider, instance);
+        this.emitCreateAndResolveIfNeeded(token, instance);
+        return instance;
+      };
 
-        if (this.hooks.hasListeners) {
-          this.hooks.emit({ type: 'create', token, instance: result });
-          this.hooks.emit({ type: 'resolve', token, instance: result });
-        }
-        return result;
+      return this.hasMiddleware
+        ? this.runMiddlewares(token, provider, createInstance)
+        : createInstance();
+    } finally {
+      activeStack.delete(token);
+    }
+  }
+
+  dispose(token: Token): void {
+    const record = this.instances.get(token);
+    if (!record) return;
+
+    this.instances.delete(token);
+
+    const instance = record.value as Record<string, unknown>;
+    for (let i = 0; i < DISPOSERS.length; i++) {
+      const method = DISPOSERS[i];
+      const disposer = instance?.[method];
+      if (typeof disposer === 'function') {
+        (disposer as () => void)();
+        break;
+      }
+    }
+
+    if (this.hooks.hasListeners) {
+      this.hooks.emit({ type: 'dispose', token, instance: record.value });
+    }
+  }
+
+  clear(): void {
+    for (const token of this.instances.keys()) {
+      this.dispose(token);
+    }
+
+    this.providers.clear();
+  }
+
+  getInstances(): unknown[] {
+    const values: unknown[] = new Array(this.instances.size);
+    let index = 0;
+
+    for (const record of this.instances.values()) {
+      values[index++] = record.value;
+    }
+
+    return values;
+  }
+
+  count(): number {
+    return this.providers.size;
+  }
+
+  private runMiddlewares<T>(
+    token: Token<T>,
+    provider: Provider<T>,
+    resolver: () => T
+  ): T {
+    let index = -1;
+
+    const dispatch = (i: number): T => {
+      if (i <= index) {
+        throw new Error('next() called more than once in middleware');
       }
 
-      // Hot path: Middlewares wrap resolution
-      return this.runMiddlewares(token, provider, stack, () => {
-        const result = this.instantiate(provider, stack);
-        this.maybeCache(token, provider, result);
+      index = i;
 
-        if (this.hooks.hasListeners) {
-          this.hooks.emit({ type: 'create', token, instance: result });
-          this.hooks.emit({ type: 'resolve', token, instance: result });
-        }
-        return result;
+      const middleware = this.middlewares[i] as MiddlewareFn<T> | undefined;
+      if (!middleware) return resolver();
+
+      return middleware({
+        token,
+        provider,
+        container: this,
+        next: () => dispatch(i + 1),
       });
-    } finally {
-      stack.delete(token);
-    }
-  }
+    };
 
-  ////////////////////////////
-  /// Instantiation
-  ////////////////////////////
+    return dispatch(0);
+  }
 
   private instantiate<T>(provider: Provider<T>, stack: Set<Token>): T {
-    if (!this.resolvers[provider.kind])
-      throw new InvalidProviderError(`Invalid provider for ${String(provider.token)}`);
-    const hasFactory = !!(provider as any).factory;
-    return (this.resolvers[provider.kind] as any)(provider, stack, hasFactory) as T;
-  }
-
-  private instantiateClass<T>(
-    provider: Provider<T>,
-    stack: Set<Token>,
-    factoryReady: boolean = false
-  ): T {
-    const cls = (provider as any).useClass as Constructor<T>;
-
-    if (!factoryReady) {
-      const depsTokens = this.getDeps(provider, cls);
-      (provider as any).deps = depsTokens;
-      (provider as any).hasDeps = depsTokens.length > 0;
-      (provider as any).factory = this.makeConstructorFactory(cls, depsTokens.length);
+    const resolver = this.resolvers[provider.kind];
+    if (!resolver) {
+      throw new InvalidProviderError(`Invalid provider for ${this.tokenToString(provider.token)}`);
     }
 
-    const factory = (provider as any).factory as FactoryFn<T>;
-    const deps = (provider as any).deps as Token[] | undefined;
+    return resolver(provider, stack) as T;
+  }
 
-    const args: any[] = [];
-    const len = deps?.length ?? 0;
+  private instantiateClass<T>(provider: Provider<T>, stack: Set<Token>): T {
+    const cls = provider.useClass as Constructor<T>;
+    const cached = this.getOrCreateClassCache(cls, provider);
 
-    for (let i = 0; i < len; i++) {
-      const token = deps![i];
-      if (!token) {
-        args.push(undefined);
+    const deps = cached.deps;
+    const args = deps.length ? new Array(deps.length) : [];
+
+    for (let i = 0; i < deps.length; i++) {
+      const depToken = deps[i];
+
+      if (!depToken) {
+        args[i] = undefined;
         continue;
       }
 
-      const optional = getInjectedOptional(cls, i) === true;
-
       try {
-        args.push(this.resolve(token, stack));
-      } catch (err) {
-        if (optional) args.push(undefined);
-        else throw err;
+        args[i] = this.resolve(depToken, stack);
+      } catch (error) {
+        if (getInjectedOptional(cls, i) === true) {
+          args[i] = undefined;
+        } else {
+          throw error;
+        }
       }
     }
 
-    const instance = factory(args);
-    this.applyPropertyInjections(instance, cls, stack);
+    const instance = cached.factory(args);
+    this.applyPropertyInjections(instance, cls, cached, stack);
+
     return instance;
   }
 
-  private instantiateFactory<T>(
-    provider: Provider<T>,
-    stack: Set<Token>,
-    factoryReady: boolean = false
-  ): T {
-    const injects = provider.inject ?? [];
-
-    if (!factoryReady) {
-      (provider as any).deps = injects;
-      (provider as any).hasDeps = injects.length > 0;
-      (provider as any).factory = this.makeFactoryFunction(
-        (provider as FactoryProvider<T>).useFactory!,
-        injects.length
-      );
+  private instantiateFactory<T>(provider: Provider<T>, stack: Set<Token>): T {
+    const deps = provider.inject ?? [];
+    if (deps.length === 0) {
+      return (provider as FactoryProvider<T>).useFactory() as T;
     }
 
-    const factory = (provider as any).factory as FactoryFn<T>;
-    const deps = injects.length ? injects.map(t => this.resolve(t, stack)) : [];
-    return factory(deps);
+    const args = new Array(deps.length);
+    for (let i = 0; i < deps.length; i++) {
+      args[i] = this.resolve(deps[i], stack);
+    }
+
+    const factory = (provider as FactoryProvider<T>).useFactory;
+    return factory(...args) as T;
   }
 
   private instantiateValue<T>(provider: Provider<T>): T {
@@ -326,39 +348,9 @@ export class DIContainer {
     return this.resolve(provider.useExisting as Token<T>, stack);
   }
 
-  ////////////////////////////
-  /// Factory Builders
-  ////////////////////////////
-
-  private makeConstructorFactory<T>(Ctor: Constructor<T>, len: number): FactoryFn<T> {
-    const map: Record<number, any> = {
-      0: () => new Ctor(),
-      1: (args: any[]) => new Ctor(args[0]),
-      2: (args: any[]) => new Ctor(args[0], args[1]),
-      3: (args: any[]) => new Ctor(args[0], args[1], args[2]),
-      4: (args: any[]) => new Ctor(args[0], args[1], args[2], args[3]),
-    };
-    return map[len] ?? ((args: any[]) => new Ctor(...args));
-  }
-
-  private makeFactoryFunction<T>(fn: FactoryFn<T>, len: number): FactoryFn<T> {
-    const map: Record<number, any> = {
-      0: () => fn(),
-      1: (args: any[]) => fn(args[0]),
-      2: (args: any[]) => fn(args[0], args[1]),
-      3: (args: any[]) => fn(args[0], args[1], args[2]),
-      4: (args: any[]) => fn(args[0], args[1], args[2], args[3]),
-    };
-    return map[len] ?? ((args: any[]) => fn(...args));
-  }
-
-  ////////////////////////////
-  /// Property Injection
-  ////////////////////////////
-
   private applyMetadata<T>(target: Constructor<T>, provider: Provider<T>): void {
     const metaScope = getMetadata(META.SCOPE, target);
-    if (metaScope && !provider.scope) provider.scope = metaScope as any;
+    if (metaScope && !provider.scope) provider.scope = metaScope as Provider<T>['scope'];
 
     const metaLifetime = getMetadata(META.LIFETIME, target);
     if (metaLifetime && !provider.lifetimeMs) provider.lifetimeMs = metaLifetime as number;
@@ -367,130 +359,197 @@ export class DIContainer {
     if (metaTimeout && !provider.timeoutMs) provider.timeoutMs = metaTimeout as number;
   }
 
-  private applyPropertyInjections<T>(instance: T, cls: Constructor<T>, stack: Set<Token>) {
-    const propMeta = getInjectedProps(cls) ?? [];
+  private applyPropertyInjections<T>(
+    instance: T,
+    cls: Constructor<T>,
+    cached: CachedClassData<T>,
+    stack: Set<Token>
+  ): void {
+    const propInjections = cached.propInjections;
 
-    for (const { key, token, optional } of propMeta) {
+    for (let i = 0; i < propInjections.length; i++) {
+      const meta = propInjections[i];
       try {
-        (instance as any)[key] = this.resolve(token as any, stack);
-      } catch (e) {
-        if (!optional) throw e;
+        (instance as Record<PropertyKey, unknown>)[meta.key] = this.resolve(meta.token, stack);
+      } catch (error) {
+        if (!meta.optional) throw error;
       }
     }
 
-    if (this.opts.autoInject) {
-      const proto = cls.prototype;
-      const keys = Reflect.ownKeys(proto).filter(k => k !== 'constructor');
-      for (const key of keys) {
-        if (propMeta.some(m => m.key === key)) continue;
-        const designType = Reflect.getMetadata('design:type', proto, key as any);
-        if (designType && typeof designType === 'function' && this.has(designType)) {
-          try {
-            (instance as any)[key] = this.resolve(designType, stack);
-          } catch { }
-        }
+    if (!this.opts.autoInject || cached.autoInjectKeys.length === 0) {
+      return;
+    }
+
+    const proto = cls.prototype;
+    const target = instance as Record<PropertyKey, unknown>;
+
+    for (let i = 0; i < cached.autoInjectKeys.length; i++) {
+      const key = cached.autoInjectKeys[i];
+      const designType = Reflect.getMetadata('design:type', proto, key as string);
+
+      if (typeof designType !== 'function' || !this.has(designType)) {
+        continue;
+      }
+
+      try {
+        target[key] = this.resolve(designType, stack);
+      } catch {
+        // Ignore failed optional-style auto injections.
       }
     }
   }
 
-  private getDeps(provider: Provider, target: any): Token[] {
+  private getOrCreateClassCache<T>(
+    cls: Constructor<T>,
+    provider: Provider<T>
+  ): CachedClassData<T> {
+    const existing = DIContainer.classCache.get(cls) as CachedClassData<T> | undefined;
+    if (existing) return existing;
+
+    const deps = this.getDeps(provider, cls);
+    const propInjections = getInjectedProps(cls) ?? [];
+    const propInjectionKeys = new Set<PropertyKey>();
+    for (let i = 0; i < propInjections.length; i++) {
+      propInjectionKeys.add(propInjections[i].key);
+    }
+
+    const autoInjectKeys = this.opts.autoInject
+      ? this.getAutoInjectKeys(cls, propInjectionKeys)
+      : [];
+
+    const cached: CachedClassData<T> = {
+      deps,
+      factory: this.makeConstructorFactory(cls, deps.length),
+      propInjections: propInjections as any,
+      propInjectionKeys,
+      autoInjectKeys,
+    };
+
+    DIContainer.classCache.set(cls, cached);
+    return cached;
+  }
+
+  private getAutoInjectKeys<T>(
+    cls: Constructor<T>,
+    excludedKeys: Set<PropertyKey>
+  ): PropertyKey[] {
+    const proto = cls.prototype;
+    const keys = Reflect.ownKeys(proto);
+    const result: PropertyKey[] = [];
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (key === 'constructor' || excludedKeys.has(key)) continue;
+
+      const descriptor = Object.getOwnPropertyDescriptor(proto, key);
+      if (!descriptor || typeof descriptor.value === 'function') continue;
+
+      result.push(key);
+    }
+
+    return result;
+  }
+
+  private getDeps(provider: Provider, target: Constructor): Token[] {
     if (provider.inject !== undefined) {
       return provider.inject;
     }
 
-    if (this.opts.autoInject === true) {
-      return getInjectedTokens(target) ?? getDesignParamTypes(target) ?? [];
+    if (!this.opts.autoInject) {
+      return [];
     }
 
-    return [];
+    return getInjectedTokens(target) ?? getDesignParamTypes(target) ?? [];
   }
 
-  ////////////////////////////
-  /// Disposal & Cleanup
-  ////////////////////////////
-
-  dispose(token: Token): void {
-    const rec = this.instances.get(token);
-    if (!rec) return;
-    this.instances.delete(token);
-    const inst = rec.value as any;
-    for (const m of DISPOSERS) {
-      if (typeof inst?.[m] === 'function') {
-        inst[m]();
-        break;
-      }
+  private makeConstructorFactory<T>(Ctor: Constructor<T>, len: number): FactoryFn<T> {
+    switch (len) {
+      case 0:
+        return () => new Ctor();
+      case 1:
+        return (args) => new Ctor(args[0] as never);
+      case 2:
+        return (args) => new Ctor(args[0] as never, args[1] as never);
+      case 3:
+        return (args) => new Ctor(args[0] as never, args[1] as never, args[2] as never);
+      case 4:
+        return (args) =>
+          new Ctor(args[0] as never, args[1] as never, args[2] as never, args[3] as never);
+      default:
+        return (args) => new Ctor(...(args as ConstructorParameters<Constructor<T>>));
     }
-    this.hooks.emit({ type: 'dispose', token, instance: inst });
   }
 
-  clear(): void {
-    for (const [token, rec] of this.instances.entries())
-      this.hooks.emit({ type: 'dispose', token, instance: rec.value });
-    this.instances.clear();
-    this.providers.clear();
+  private prepareClassProvider<T>(provider: Provider<T>, cls: Constructor<T>): void {
+    const cached = this.getOrCreateClassCache(cls, provider);
+    (provider as Provider<T> & { deps?: Token[]; factory?: FactoryFn<T> }).deps = cached.deps;
+    (provider as Provider<T> & { factory?: FactoryFn<T> }).factory = cached.factory;
   }
 
-  ////////////////////////////
-  /// Utilities
-  ////////////////////////////
+  private prepareFactoryProvider<T>(provider: FactoryProvider<T>): void {
+    provider.inject = provider.inject ?? [];
+  }
 
-  private shouldCache(provider: Provider<any>): boolean {
+  private shouldCache(provider: Provider): boolean {
     const scope = provider.scope ?? this.opts.defaultScope;
     return scope === 'singleton' || scope === 'scoped';
   }
 
-  private maybeCache(token: Token, provider: Provider, value: unknown) {
+  private maybeCache(token: Token, provider: Provider, value: unknown): void {
     if (!this.shouldCache(provider)) return;
+
     const lifetimeMs = provider.lifetimeMs;
     this.instances.set(token, {
       value,
-      expiresAt: lifetimeMs ? Date.now() + lifetimeMs : undefined,
+      expiresAt: lifetimeMs && lifetimeMs > 0 ? Date.now() + lifetimeMs : undefined,
     });
   }
 
-  private isExpired(rec: InstanceRecord): boolean {
-    return rec.expiresAt !== undefined && Date.now() >= rec.expiresAt;
+  private isExpired(record: InstanceRecord): boolean {
+    return record.expiresAt !== undefined && Date.now() >= record.expiresAt;
   }
 
-  private getProviderOrThrow<T>(token: Token<T>, stack: Set<Token>): Provider<T> | null {
-    const provider = this.providers.get(token);
-    if (provider) return provider as Provider<T>;
-    if (this.parent) return null;
-    const name = String((token as any).name ?? token);
-    throw new ProviderNotFoundError(`No provider found for ${name}`);
-  }
+  private ensureAutoProvider<T>(token: Token<T>): void {
+    if (this.providers.has(token)) return;
 
-  private circularError(token: Token, stack: Set<Token>) {
-    const chain = [...stack, token].map(t => String((t as any).name ?? t)).join(' -> ');
-    return new CircularDependencyError(`Circular dependency detected: ${chain}`);
-  }
+    const implementation = InjectableStore.getImplementation(token);
+    if (implementation) {
+      this.register({ token, useClass: implementation });
+      return;
+    }
 
-  private emitAndReturn<T>(token: Token, instance: T, created = false): T {
-    if (created) this.hooks.emit({ type: 'create', token, instance });
-    this.hooks.emit({ type: 'resolve', token, instance });
-    return instance;
-  }
-
-  /**
-   * Get all active instances in the container.
-   */
-  getInstances(): unknown[] {
-    return Array.from(this.instances.values()).map(rec => rec.value);
-  }
-
-  /**
-   * Alias for register (for compatibility).
-   */
-  addProvider<T>(provider: any): void {
-    if (!provider) return;
-    if (typeof provider === 'function') {
-      this.register({ token: provider, useClass: provider });
-    } else {
-      this.register(provider);
+    if (InjectableStore.has(token)) {
+      this.register({ token, useClass: token as Constructor<T> });
     }
   }
 
-  count(): number {
-    return this.providers.size;
+  private emitResolveIfNeeded<T>(token: Token, instance: T): T {
+    if (this.hooks.hasListeners) {
+      this.hooks.emit({ type: 'resolve', token, instance });
+    }
+    return instance;
+  }
+
+  private emitCreateAndResolveIfNeeded<T>(token: Token, instance: T): void {
+    if (!this.hooks.hasListeners) return;
+    this.hooks.emit({ type: 'create', token, instance });
+    this.hooks.emit({ type: 'resolve', token, instance });
+  }
+
+  private detectProviderKind<T>(provider: Omit<Provider<T>, 'kind'>): ProviderKind | undefined {
+    if ('useClass' in provider) return 'class';
+    if ('useFactory' in provider) return 'factory';
+    if ('useValue' in provider) return 'value';
+    if ('useExisting' in provider || 'useToken' in (provider as object)) return 'existing';
+    return undefined;
+  }
+
+  private circularError(token: Token, stack: Set<Token>): CircularDependencyError {
+    const chain = [...stack, token].map((item) => this.tokenToString(item)).join(' -> ');
+    return new CircularDependencyError(`Circular dependency detected: ${chain}`);
+  }
+
+  private tokenToString(token: Token): string {
+    return String((token as { name?: string })?.name ?? token);
   }
 }

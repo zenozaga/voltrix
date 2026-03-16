@@ -48,10 +48,10 @@
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-prettier": "^5.1.0",
     "prettier": "^3.1.0",
-    "tsx": "^4.6.0",
+    "tsx": "^4.21.0",
     "typescript": "5.9.3",
     "vitest": "^4.1.0",
-    "tsup": "^8.5.1"
+    "tslib": "^2.8.1"
   },
   "engines": {
     "node": ">=20.0.0",
