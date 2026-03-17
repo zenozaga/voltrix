@@ -44,7 +44,8 @@ type CachedClassData<T = unknown> = {
   factory: FactoryFn<T>;
   propInjections: Array<{ key: PropertyKey; token: Token; optional?: boolean }>;
   propInjectionKeys: Set<PropertyKey>;
-  autoInjectKeys: PropertyKey[];
+  /** Pre-resolved at cache-build time: key + design:type token, no Reflect on each instantiation */
+  autoInjectTokens: Array<{ key: PropertyKey; token: Token }>;
 };
 
 const DISPOSERS = ['dispose', 'destroy', 'close'] as const;
@@ -376,23 +377,18 @@ export class DIContainer {
       }
     }
 
-    if (!this.opts.autoInject || cached.autoInjectKeys.length === 0) {
+    if (!this.opts.autoInject || cached.autoInjectTokens.length === 0) {
       return;
     }
 
-    const proto = cls.prototype;
     const target = instance as Record<PropertyKey, unknown>;
 
-    for (let i = 0; i < cached.autoInjectKeys.length; i++) {
-      const key = cached.autoInjectKeys[i];
-      const designType = Reflect.getMetadata('design:type', proto, key as string);
-
-      if (typeof designType !== 'function' || !this.has(designType)) {
-        continue;
-      }
+    for (let i = 0; i < cached.autoInjectTokens.length; i++) {
+      const { key, token } = cached.autoInjectTokens[i];
+      if (!this.has(token)) continue;
 
       try {
-        target[key] = this.resolve(designType, stack);
+        target[key] = this.resolve(token, stack);
       } catch {
         // Ignore failed optional-style auto injections.
       }
@@ -413,8 +409,8 @@ export class DIContainer {
       propInjectionKeys.add(propInjections[i].key);
     }
 
-    const autoInjectKeys = this.opts.autoInject
-      ? this.getAutoInjectKeys(cls, propInjectionKeys)
+    const autoInjectTokens = this.opts.autoInject
+      ? this.getAutoInjectTokens(cls, propInjectionKeys)
       : [];
 
     const cached: CachedClassData<T> = {
@@ -422,20 +418,20 @@ export class DIContainer {
       factory: this.makeConstructorFactory(cls, deps.length),
       propInjections: propInjections as any,
       propInjectionKeys,
-      autoInjectKeys,
+      autoInjectTokens,
     };
 
     DIContainer.classCache.set(cls, cached);
     return cached;
   }
 
-  private getAutoInjectKeys<T>(
+  private getAutoInjectTokens<T>(
     cls: Constructor<T>,
     excludedKeys: Set<PropertyKey>
-  ): PropertyKey[] {
+  ): Array<{ key: PropertyKey; token: Token }> {
     const proto = cls.prototype;
     const keys = Reflect.ownKeys(proto);
-    const result: PropertyKey[] = [];
+    const result: Array<{ key: PropertyKey; token: Token }> = [];
 
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
@@ -444,7 +440,8 @@ export class DIContainer {
       const descriptor = Object.getOwnPropertyDescriptor(proto, key);
       if (!descriptor || typeof descriptor.value === 'function') continue;
 
-      result.push(key);
+      const token = Reflect.getMetadata('design:type', proto, key as string) as Token | undefined;
+      if (token) result.push({ key, token });
     }
 
     return result;
