@@ -21,10 +21,6 @@ export function Scope(optionsOrFirstScope: string | ScopeOptions, ...remainingSc
     ? { scopes: [optionsOrFirstScope, ...remainingScopes] }
     : optionsOrFirstScope;
 
-  // Track scopes for auditing
-  if (typeof process !== 'undefined') {
-    process.stderr.write(`--- DECORATOR: Calling registerScopes for ${JSON.stringify(options.scopes)}\n`);
-  }
   SecurityRegistry.registerScopes(options.scopes);
 
   return DecoratorFactory.create({

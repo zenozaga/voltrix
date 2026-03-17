@@ -117,29 +117,31 @@ export class Request implements IRequest {
   async buffer(): Promise<Buffer> {
     if (this.cachedBuffer) return this.cachedBuffer;
 
+    if (this.streamFinished) {
+      this.detectJSON();
+      return (this.cachedBuffer = Buffer.concat(this.accumulatedChunks));
+    }
+
     return (this.cachedBuffer = await new Promise((resolve, reject) => {
-      const chunks: Buffer[] = [];
-
-      this.onData((chunk, isLast) => {
-        // ------------------------------------------------------------
-        // EARLY JSON DETECTION
-        // ------------------------------------------------------------
-        if (!this.checkedJSON) {
-          for (let i = 0; i < chunk.length; i++) {
-            const byte = chunk[i];
-            if (byte === 32 || byte === 9 || byte === 10 || byte === 13) continue;
-            this.detectedJSON = byte === 0x7b || byte === 0x5b;
-            this.checkedJSON = true;
-            break;
-          }
-        }
-
-        chunks.push(Buffer.from(chunk));
-        if (isLast) resolve(Buffer.concat(chunks));
+      this.onData((_chunk, isLast) => {
+        this.detectJSON();
+        if (isLast) resolve(Buffer.concat(this.accumulatedChunks));
       });
 
       this.response.onAborted(() => reject(new Error('Request aborted')));
     }));
+  }
+
+  private detectJSON(): void {
+    if (this.checkedJSON || this.accumulatedChunks.length === 0) return;
+    const first = this.accumulatedChunks[0];
+    for (let i = 0; i < first.length; i++) {
+      const byte = first[i];
+      if (byte === 32 || byte === 9 || byte === 10 || byte === 13) continue;
+      this.detectedJSON = byte === 0x7b || byte === 0x5b;
+      this.checkedJSON = true;
+      return;
+    }
   }
 
   async body(): Promise<string> {
@@ -199,7 +201,7 @@ export class Request implements IRequest {
   }
 
   header(name: string): string {
-    return this._headers[name.toLowerCase()] || this._headers[name];
+    return this._headers[name.toLowerCase()];
   }
 
   headers(): Record<string, string> {

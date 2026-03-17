@@ -1,5 +1,9 @@
-import * as fs from 'node:fs';
 import type { IRequest } from '../types/http.js';
+
+const RE_BOUNDARY = /boundary=(?:"([^"]+)"|([^;]+))/;
+const RE_NAME = /name="([^"]+)"/;
+const RE_FILENAME = /filename="([^"]+)"/;
+const CRLF_CRLF = Buffer.from('\r\n\r\n');
 
 export interface MultipartPart {
   name: string;
@@ -15,10 +19,10 @@ export interface MultipartPart {
 export type PartHandler = (part: MultipartPart) => void | Promise<void>;
 
 export class MultipartParser {
-  private boundary: Uint8Array;
+  private boundary: Buffer;
   private state: 'BOUNDARY' | 'HEADER' | 'BODY' | 'END' = 'BOUNDARY';
-  private buffer: Uint8Array = new Uint8Array(0);
-  
+  private buffer: Buffer = Buffer.alloc(0);
+
   private onPart: PartHandler;
   private activePart?: MultipartPart;
   private partDataBuffer: Uint8Array[] = []; // Used if onData is NOT provided
@@ -30,17 +34,11 @@ export class MultipartParser {
 
   push(chunk: Uint8Array): void {
     // We MUST copy the chunk because the uWS ArrayBuffer view is transient
-    const copy = new Uint8Array(chunk.length);
-    copy.set(chunk);
+    const copy = Buffer.from(chunk);
 
-    if (this.buffer.length === 0) {
-      this.buffer = copy;
-    } else {
-      const newBuf = new Uint8Array(this.buffer.length + copy.length);
-      newBuf.set(this.buffer);
-      newBuf.set(copy, this.buffer.length);
-      this.buffer = newBuf;
-    }
+    this.buffer = this.buffer.length === 0
+      ? copy
+      : Buffer.concat([this.buffer, copy]);
 
     this.parse();
   }
@@ -63,7 +61,7 @@ export class MultipartParser {
             }
             
             this.state = 'END';
-            this.buffer = new Uint8Array(0);
+            this.buffer = Buffer.alloc(0);
             return;
         }
 
@@ -71,15 +69,15 @@ export class MultipartParser {
         this.state = 'HEADER';
       } 
       else if (this.state === 'HEADER') {
-        const index = this.indexOf(this.buffer, Buffer.from('\r\n\r\n'), offset);
+        const index = this.buffer.indexOf(CRLF_CRLF, offset);
         if (index === -1) break;
 
-        const headerSection = Buffer.from(this.buffer.subarray(offset, index)).toString();
+        const headerSection = this.buffer.toString('utf8', offset, index);
         const headers = this.parseHeaders(headerSection);
-        
+
         const cd = headers['content-disposition'] || '';
-        const nameMatch = cd.match(/name="([^"]+)"/);
-        const filenameMatch = cd.match(/filename="([^"]+)"/);
+        const nameMatch = RE_NAME.exec(cd);
+        const filenameMatch = RE_FILENAME.exec(cd);
 
         this.activePart = {
           name: nameMatch ? nameMatch[1] : '',
@@ -148,8 +146,8 @@ export class MultipartParser {
     }
   }
 
-  private indexOf(haystack: Uint8Array, needle: Uint8Array, offset: number): number {
-    return Buffer.from(haystack).indexOf(needle, offset);
+  private indexOf(haystack: Buffer, needle: Buffer, offset: number): number {
+    return haystack.indexOf(needle, offset);
   }
 
   private parseHeaders(raw: string): Record<string, string> {
@@ -173,7 +171,7 @@ export async function parseMultipart(req: IRequest, onPart: PartHandler): Promis
     throw new Error('Not a multipart request');
   }
 
-  const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/);
+  const boundaryMatch = RE_BOUNDARY.exec(contentType);
   if (!boundaryMatch) {
     throw new Error('Multipart boundary not found');
   }

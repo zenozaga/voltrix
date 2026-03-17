@@ -1,6 +1,24 @@
 import type { HttpResponse } from 'uWebSockets.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.wav': 'audio/wav',
+  '.mp4': 'video/mp4',
+  '.woff': 'application/font-woff',
+  '.ttf': 'application/font-ttf',
+  '.eot': 'application/vnd.ms-fontobject',
+  '.otf': 'application/font-otf',
+  '.wasm': 'application/wasm',
+};
 import type { IResponse } from '../types/http.js';
 import { Renderer } from '../renderer.js';
 import { STATUS_TEXT, StatusCode, STATUS_LINES } from '../common/constants.js';
@@ -9,6 +27,7 @@ import { normalizeBodyForUWS, BodyInput } from '../common/normalize-data.js';
 export class Response implements IResponse {
   public _headers: Record<string, string> = {};
   public _headerNames: string[] = [];
+  private _headerLowerMap: Map<string, string> = new Map(); // lowercase → original casing
   public locals: Record<string, any> = {};
   private _statusCode = 200;
   private _sent = false;
@@ -28,6 +47,7 @@ export class Response implements IResponse {
     this.renderer = renderer;
     this._headers = {};
     this._headerNames = [];
+    this._headerLowerMap = new Map();
     this._statusCode = 200;
     this._sent = false;
     this.isAborted = false;
@@ -76,7 +96,9 @@ export class Response implements IResponse {
 
   header(name: string, value?: string): this | string | undefined {
     if (value !== undefined) {
-      if (this._headers[name] === undefined) {
+      const lower = name.toLowerCase();
+      if (!this._headerLowerMap.has(lower)) {
+        this._headerLowerMap.set(lower, name);
         this._headerNames.push(name);
       }
       this._headers[name] = value;
@@ -95,25 +117,14 @@ export class Response implements IResponse {
 
   setHeader(name: string, value: string): this {
     const lower = name.toLowerCase();
-    // console.log(`SETTING HEADER: ${name} = ${value}`);
-    
-    // Check if we already have this header (case-insensitive)
-    let found = false;
-    for (let i = 0; i < this._headerNames.length; i++) {
-        const existingName = this._headerNames[i];
-        if (existingName.toLowerCase() === lower) {
-            // Update the existing value
-            this._headers[existingName] = value;
-            found = true;
-            break;
-        }
+    const existing = this._headerLowerMap.get(lower);
+    if (existing !== undefined) {
+      this._headers[existing] = value;
+    } else {
+      this._headerLowerMap.set(lower, name);
+      this._headerNames.push(name);
+      this._headers[name] = value;
     }
-    
-    if (!found) {
-        this._headerNames.push(name);
-        this._headers[name] = value;
-    }
-    
     return this;
   }
 
@@ -158,7 +169,6 @@ export class Response implements IResponse {
     this._sent = true;
 
     const payload = normalizeBodyForUWS(body);
-    const contentLength = typeof payload === 'string' ? Buffer.byteLength(payload) : payload.byteLength;
 
     this.raw.cork(() => {
       const statusLine = STATUS_LINES[this._statusCode] || `${this._statusCode} ${STATUS_TEXT[this._statusCode as StatusCode] || 'Unknown'}`;
@@ -358,24 +368,7 @@ export class Response implements IResponse {
 
   private getContentType(filename: string): string {
     const ext = path.extname(filename).toLowerCase();
-    const map: Record<string, string> = {
-      '.html': 'text/html',
-      '.js': 'text/javascript',
-      '.css': 'text/css',
-      '.json': 'application/json',
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.gif': 'image/gif',
-      '.svg': 'image/svg+xml',
-      '.wav': 'audio/wav',
-      '.mp4': 'video/mp4',
-      '.woff': 'application/font-woff',
-      '.ttf': 'application/font-ttf',
-      '.eot': 'application/vnd.ms-fontobject',
-      '.otf': 'application/font-otf',
-      '.wasm': 'application/wasm',
-    };
-    return map[ext] || 'application/octet-stream';
+    return MIME_TYPES[ext] ?? 'application/octet-stream';
   }
 
   // ============================================
