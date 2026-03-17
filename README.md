@@ -8,12 +8,12 @@ Single-core, 100 concurrent connections, autocannon, loopback:
 
 | Scenario | Pure Node | uWS raw | **Voltrix** |
 |---|---|---|---|
-| GET / | 88k | 88k | **94k** |
-| GET /users/:id | 85k | 93k | **97k** |
-| GET /deep/99 (100 routes) | 85k | 91k | **97k** |
-| GET /mw (20 middlewares) | 87k | 90k | **95k** |
-| POST /echo JSON | 74k | 94k | **99k** |
-| POST /form URL-encoded | 63k | 99k | **95k** |
+| GET / | 88k | 88k | **94k** req/s |
+| GET /users/:id | 85k | 93k | **97k** req/s |
+| GET /deep/99 (100 routes) | 85k | 91k | **97k** req/s |
+| GET /mw (20 middlewares) | 87k | 90k | **95k** req/s |
+| POST /echo JSON | 74k | 94k | **99k** req/s |
+| POST /form URL-encoded | 63k | 99k | **95k** req/s |
 
 > Voltrix outperforms raw uWS on GET routes. uWS wins slightly on URL-encoded body due to zero framework overhead.
 
@@ -58,149 +58,119 @@ console.log('Listening on http://localhost:3000');
 ## Decorator API
 
 ```bash
-npm install @voltrix/express @voltrix/decorator @voltrix/injector reflect-metadata
+npm install @voltrix/express @voltrix/decorator reflect-metadata
 ```
 
 ```ts
 import 'reflect-metadata';
-import { Controller, Get, Post, Body, Param } from '@voltrix/decorator';
-import { Injectable } from '@voltrix/injector';
+import { VoltrixApp, createVoltrix, GET, POST, Body, Query, Params } from '@voltrix/decorator';
 
-@Injectable()
-class UserService {
-  find(id: string) {
-    return { id, name: 'Alice' };
-  }
-}
+@VoltrixApp({
+  port: 3000,
+  cors: { origin: '*' }
+})
+class Application {
 
-@Controller('/users')
-class UserController {
-  constructor(private users: UserService) {}
-
-  @Get('/:id')
-  getUser(@Param('id') id: string) {
-    return this.users.find(id);
+  @GET('/api/health')
+  async healthCheck() {
+    return { status: 'ok', timestamp: new Date().toISOString() };
   }
 
-  @Post('/')
-  createUser(@Body() body: any) {
-    return body;
+  @GET('/api/users')
+  async getUsers(@Query('limit') limit = 10) {
+    return { users: [], total: 0, limit };
+  }
+
+  @POST('/api/users')
+  async createUser(@Body() userData: { name: string; email: string }) {
+    return { success: true, user: { id: 1, ...userData } };
   }
 }
 ```
 
 ```ts
-import { ApplicationProcessor } from '@voltrix/decorator';
-import { DIContainer } from '@voltrix/injector';
-import voltrix from '@voltrix/express';
-
-const app = voltrix();
-const container = new DIContainer();
-
-const processor = new ApplicationProcessor(app, {
-  controllers: [UserController],
-  providers: [UserService],
-  container,
+const app = await createVoltrix(Application, {
+  autoStart: true,
+  port: 3000,
+  host: 'localhost'
 });
-
-processor.process();
-await app.listen(3000);
 ```
 
-## OpenAPI / Swagger
+Controllers can be grouped under a prefix using `@Controller`:
+
+```ts
+import { Controller, GET } from '@voltrix/decorator';
+
+@Controller('v1')
+class UserController {
+  @GET('/users')
+  async getUsers() {}
+}
+// Registers: GET /v1/users
+```
+
+The architecture follows `App -> Module -> Controller -> Function`. The full application lifecycle is configurable via `@OnReady`, `@OnStart`, `@OnStop`, and `@OnError` hooks on the application class.
+
+## OpenAPI
 
 ```bash
 npm install @voltrix/swagger
 ```
 
-```ts
-import { generateSpec } from '@voltrix/swagger';
-import { ApiOperation, ApiResponse } from '@voltrix/swagger/decorator';
+### Programmatic (router-based)
 
-// Programmatic
-const spec = generateSpec({
-  info: { title: 'My API', version: '1.0.0' },
-  routes: [{ method: 'get', path: '/ping', responses: { 200: { description: 'OK' } } }],
-});
-
-// Serve the spec
-app.get('/openapi.json', (_req, res) => res.json(spec));
-```
-
-## Request API
+Annotate routes with `.meta()` and pass the router to `generateFromRouter`:
 
 ```ts
-app.post('/upload', async (req, res) => {
-  // Body
-  const text   = await req.body();         // string
-  const json   = await req.json();         // parsed JSON
-  const buffer = await req.buffer();       // Buffer
-
-  // Params & Query
-  const id   = req.getParam('id');
-  const page = req.getQuery('page');
-
-  // Headers
-  const ct = req.header('content-type');
-
-  // Multipart
-  await req.parseMultipart(async (part) => {
-    console.log(part.name, part.filename, part.data);
-  });
-});
-```
-
-## Response API
-
-```ts
-app.get('/demo', (req, res) => {
-  res.status(201).json({ created: true });
-  res.send('plain text');
-  res.sendBuffer(buffer);
-  res.redirect('/other');
-  res.setHeader('X-Custom', 'value');
-  res.render('view', { data });        // template engine
-});
-```
-
-## Middleware
-
-```ts
-// Global
-app.use((req, res, next) => {
-  console.log(req.method, req.url);
-  next();
-});
-
-// Error handler
-app.useError((err, req, res, next) => {
-  res.status(500).json({ error: err.message });
-});
-
-// Router
 import { createRouter } from '@voltrix/express';
+import { generateFromRouter, swaggerUi } from '@voltrix/swagger';
 
-const router = createRouter();
-router.get('/profile', handler);
+const router = createRouter('/v1');
 
-app.use('/api/v1', router);
+router.get('/users', handler).meta({
+  summary: 'List users',
+  tags: ['Users']
+});
+
+router.post('/users/:id', handler).meta({
+  summary: 'Update user',
+  tags: ['Users'],
+  responses: {
+    200: { description: 'Updated' }
+  }
+});
+
+const spec = generateFromRouter(router, {
+  title: 'My API',
+  version: '1.0.0'
+});
+
+// Serve Swagger UI at /docs
+app.use(swaggerUi(spec, '/docs'));
 ```
+
+### Decorator-based (tree)
+
+When using the decorator API, pass the resolved `AppTree` to `generateFromTree`:
+
+```ts
+import { generateFromTree, swaggerUi } from '@voltrix/swagger';
+
+const spec = generateFromTree(appTree, {
+  title: 'My API',
+  version: '1.0.0'
+});
+
+app.use(swaggerUi(spec, '/docs'));
+```
+
+Both generators produce an OpenAPI 3.0 document. Routes can be excluded or namespaced via their metadata (`exclude: true`, `namespace: 'admin'`), and the `namespace` option on the generator call filters to that namespace only.
 
 ## Requirements
 
 - Node.js >= 18.0.0 (LTS: 20, 22)
 - TypeScript >= 4.5 (for decorators)
 - Ubuntu 22.04+ / macOS / Windows
-
-## Architecture
-
-Voltrix wraps uWebSockets.js with a minimal abstraction layer:
-
-- **Object pooling** — `Request` and `Response` instances are reused across requests
-- **O(1) header lookup** — case-insensitive header map
-- **Sync fast-path** — parameter resolvers skip `async/await` when no I/O is needed
-- **Pre-compiled regex** — route patterns and multipart boundaries compiled once
-- **LRU route cache** — frequently accessed routes bypass handler lookup
 
 ## License
 

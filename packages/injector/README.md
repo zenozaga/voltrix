@@ -1,369 +1,404 @@
-# @voltrix/decorator
+# @voltrix/injector
 
-High-performance decorator system for Voltrix framework with extensible patterns and dependency injection.
+Dependency injection container with decorator and `reflect-metadata` support for the Voltrix framework.
 
-> **🤖 For AI Agents & Bots**: This package follows specific architectural patterns and coding standards. Please read the [`.ai-context/rules.md`](.ai-context/rules.md) file for detailed guidelines on how to contribute, extend, and maintain this codebase. The `.ai-context/` directory contains all the necessary information about the framework architecture, coding conventions, and implementation tasks.
-
-## 🚀 Quick Start
-
-### Installation
+## Installation
 
 ```bash
-pnpm add @voltrix/decorator
+pnpm add @voltrix/injector reflect-metadata
 ```
 
-### Basic Usage
+Ensure `reflect-metadata` is imported once at the entry point of your application:
 
 ```typescript
-import { VoltrixApp, createVoltrix, GET, POST, Body, Query } from '@voltrix/decorator';
+import 'reflect-metadata';
+```
 
-@VoltrixApp({
-  port: 3000,
-  cors: { origin: '*' }
-})
-class Application {
-  
-  @GET('/api/health')
-  async healthCheck() {
-    return { status: 'ok', timestamp: new Date().toISOString() };
+Your `tsconfig.json` must enable decorator metadata:
+
+```json
+{
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
   }
-  
-  @GET('/api/users')  
-  async getUsers(@Query('limit') limit = 10) {
-    return { users: [], total: 0, limit };
-  }
-  
-  @POST('/api/users')
-  async createUser(@Body() userData: { name: string; email: string }) {
-    return { success: true, user: { id: 1, ...userData } };
+}
+```
+
+## Quick Start
+
+```typescript
+import 'reflect-metadata';
+import { DIContainer, Injectable, Inject, Singleton } from '@voltrix/injector';
+
+@Singleton()
+class Database {
+  query(sql: string) { /* ... */ }
+}
+
+@Injectable()
+class UserService {
+  constructor(@Inject(Database) private db: Database) {}
+
+  findAll() {
+    return this.db.query('SELECT * FROM users');
   }
 }
 
-// 🎯 Create and start the application
-const app = await createVoltrix(Application, {
-  autoStart: true,
-  port: 3000,
-  host: 'localhost'
-});
+const container = new DIContainer();
+container.registerMany([Database, UserService]);
 
-console.log('✅ Voltrix application running!');
+const userService = container.get(UserService);
+userService.findAll();
 ```
 
-## 🏭 Factory Functions
+## Container
 
-### `createVoltrix()` - General Purpose
+### Creating a Container
 
 ```typescript
-// Basic creation with auto-start
-const app = await createVoltrix(Application, {
-  autoStart: true,
-  port: 3000,
-  host: 'localhost'
-});
+import { DIContainer } from '@voltrix/injector';
 
-// Manual control
-const app = await createVoltrix(Application);
-await app.start(3000, 'localhost');
+// Standalone container
+const container = new DIContainer();
+
+// Child container (inherits registrations from parent)
+const child = new DIContainer(parentContainer);
+
+// Container with auto-injection enabled
+const container = new DIContainer(null, { autoInject: true });
+
+// Create a child via method
+const child = container.createChild();
 ```
 
-### `createVoltrixProduction()` - Production Optimized
+### Registering Providers
+
+**Class provider** — instantiates the class on resolution:
 
 ```typescript
-// Optimized for production with environment variables
-const app = await createVoltrixProduction(Application, {
-  port: process.env.PORT || 8080,
-  host: process.env.HOST || '0.0.0.0',
-  skipValidation: true  // Skip some validations for performance
-});
+container.register({ token: UserService, useClass: UserService });
+
+// With explicit scope
+container.register({ token: UserService, useClass: UserService, scope: 'singleton' });
+
+// Register an implementation behind an abstract type
+abstract class ILogger {}
+class ConsoleLogger extends ILogger {}
+container.register({ token: ILogger, useClass: ConsoleLogger });
 ```
 
-### `createVoltrixDevelopment()` - Development Enhanced
+**Value provider** — returns a constant:
 
 ```typescript
-// Enhanced development features
-const app = await createVoltrixDevelopment(Application, {
-  port: 3000,
-  host: 'localhost',
-  watchMode: true,    // File watching
-  verbose: true       // Detailed logging
-});
+const DB_URL = Symbol('DB_URL');
+container.register({ token: DB_URL, useValue: 'postgresql://localhost/mydb' });
 ```
 
-### `createVoltrixCluster()` - Multi-Instance
+**Factory provider** — calls a function to produce the value:
 
 ```typescript
-// Create multiple instances for load balancing
-const apps = await createVoltrixCluster([
-  { class: Application, options: { port: 3001 } },
-  { class: Application, options: { port: 3002 } },
-  { class: Application, options: { port: 3003 } }
-]);
-```
-
-## 🎯 Key Features
-
-### ⚡ High Performance
-- Optimized metadata caching with LRU eviction
-- Lazy decorator initialization
-- Pre-compiled validation functions
-- Memory-efficient object pooling
-
-### 🔧 Extensible Decorators
-Every decorator supports `.extend()` for customization:
-
-```typescript
-// Create custom HTTP decorators
-const CachedGET = GET.extend({ cache: { ttl: 300 } });
-const AuthenticatedGET = GET.extend({ middleware: [authMiddleware] });
-
-// Create custom security decorators  
-const AdminRole = Role.extend({ hierarchy: ['admin', 'moderator'] });
-const UserPermission = Permission.extend({ actions: ['read', 'write'] });
-
-// Create custom file handlers
-const FilePDF = FileStream.extend({ type: ['application/pdf'] });
-const ImageUpload = FileStream.extend({ 
-  type: ['image/jpeg', 'image/png'],
-  processing: { resize: true }
+const CONFIG = Symbol('CONFIG');
+container.register({
+  token: CONFIG,
+  useFactory: (container) => ({
+    db: container.get(DB_URL),
+    port: 3000,
+  }),
 });
 ```
 
-### 💉 Optimized Dependency Injection
+**Alias provider** — forwards resolution to another token:
 
-Performance-focused DI container (10x faster than tsyringe):
+```typescript
+container.register({ token: 'primary', useValue: 'main-db' });
+container.register({ token: 'replica', useExisting: 'primary' });
+// container.get('replica') === container.get('primary')
+```
+
+**Batch registration** — register multiple decorated classes at once:
+
+```typescript
+container.registerMany([Database, UserService, AuthService]);
+```
+
+> `registerMany` uses each class as both its own token and implementation. The classes must be decorated with `@Injectable()`, `@Singleton()`, `@Transient()`, or `@Scoped()`.
+
+### Resolving Dependencies
+
+```typescript
+// Throws ProviderNotFoundError if not registered
+const service = container.get(UserService);
+
+// Identical to get()
+const service = container.resolve(UserService);
+
+// Check without throwing
+if (container.has(UserService)) {
+  const service = container.get(UserService);
+}
+```
+
+### Aliases for Token and Provider Keys
+
+The `provide` key is accepted as an alias for `token`, and `useToken` is accepted as an alias for `useExisting`. These follow patterns common in other frameworks:
+
+```typescript
+container.register({ provide: 'config', useValue: { port: 3000 } });
+container.register({ provide: 'cfg', useToken: 'config' });
+```
+
+### Disposal
+
+`dispose(token)` resolves the cached instance for that token and calls its cleanup method (`dispose`, `destroy`, or `close`) if one exists:
+
+```typescript
+class Connection {
+  dispose() { /* close the connection */ }
+}
+
+container.register({ token: Connection, useClass: Connection, scope: 'singleton' });
+container.get(Connection);
+
+container.dispose(Connection); // calls instance.dispose()
+```
+
+`clear()` disposes all tracked instances and empties the container's instance cache:
+
+```typescript
+container.clear();
+```
+
+### Middleware
+
+Middleware intercepts every resolution call. Call `ctx.next()` to proceed and optionally transform the result:
+
+```typescript
+container.use((ctx) => {
+  console.log(`Resolving: ${String(ctx.token)}`);
+  const instance = ctx.next();
+  console.log(`Resolved: ${String(ctx.token)}`);
+  return instance;
+});
+```
+
+Multiple middleware are applied in registration order.
+
+### Lifecycle Hooks
+
+```typescript
+container.on(({ type, token, instance }) => {
+  if (type === 'create') {
+    // Fired once when a new instance is constructed
+    console.log(`Created: ${String(token)}`);
+  }
+  if (type === 'resolve') {
+    // Fired on every resolution (including cache hits)
+    console.log(`Resolved: ${String(token)}`);
+  }
+});
+```
+
+Event types: `'create'` | `'resolve'`
+
+## Decorators
+
+### Scope Decorators
+
+**`@Injectable()`** — marks a class as injectable. Required when using `registerMany`. Uses the default scope (singleton):
 
 ```typescript
 @Injectable()
+class EmailService {}
+```
+
+**`@Singleton()`** — the same instance is returned on every resolution:
+
+```typescript
+@Singleton()
+class AppConfig {}
+```
+
+**`@Transient()`** — a new instance is created on every resolution:
+
+```typescript
+@Transient()
+class RequestContext {}
+```
+
+**`@Scoped()`** — the same instance is returned within the same container scope. Child containers get their own instance:
+
+```typescript
+@Scoped()
+class UnitOfWork {}
+```
+
+### Injection Decorators
+
+**`@Inject(Token)`** — injects a dependency by token into a constructor parameter or class property:
+
+```typescript
+@Injectable()
+class OrderService {
+  // Constructor injection
+  constructor(@Inject(Database) private db: Database) {}
+}
+
+@Injectable()
+class ReportService {
+  // Property injection
+  @Inject(Database)
+  private db!: Database;
+}
+```
+
+**`@Inject(Token, { optional: true })`** — the dependency is not required. If the token is not registered, the value is `undefined` rather than throwing:
+
+```typescript
+@Injectable()
+class NotificationService {
+  constructor(
+    @Inject('SMTP_CLIENT', { optional: true }) private smtp?: SmtpClient
+  ) {}
+}
+
+@Injectable()
+class AuditService {
+  @Inject('LOGGER', { optional: true })
+  private logger?: Logger;
+}
+```
+
+## Container Hierarchy
+
+Child containers fall back to the parent for tokens they do not have registered themselves. Registering a token in a child overrides the parent only for that child:
+
+```typescript
+const parent = new DIContainer();
+parent.register({ token: 'db', useValue: 'production-db' });
+
+const child = parent.createChild();
+child.register({ token: 'db', useValue: 'test-db' });
+
+child.get('db');   // 'test-db'
+parent.get('db');  // 'production-db'
+
+// Tokens not overridden in child are resolved from parent
+child.get('other-from-parent');
+```
+
+## Error Handling
+
+The container throws typed errors for common failure modes:
+
+```typescript
+import {
+  ProviderNotFoundError,
+  CircularDependencyError,
+  InvalidProviderError,
+} from '@voltrix/injector';
+
+try {
+  container.get('UNREGISTERED');
+} catch (e) {
+  if (e instanceof ProviderNotFoundError) {
+    console.error('Token not registered');
+  }
+}
+```
+
+| Error | When thrown |
+|---|---|
+| `ProviderNotFoundError` | `get()` or `resolve()` is called for a token that is not registered in the container or any parent |
+| `CircularDependencyError` | A dependency cycle is detected during resolution (e.g., `A -> B -> A`) |
+| `InvalidProviderError` | A registration is missing a required key (`token`/`provide`) or a provider type (`useClass`, `useValue`, `useFactory`, `useExisting`/`useToken`) |
+
+## Complete Example
+
+```typescript
+import 'reflect-metadata';
+import {
+  DIContainer,
+  Injectable,
+  Singleton,
+  Transient,
+  Inject,
+} from '@voltrix/injector';
+
+const DB_URL = Symbol('DB_URL');
+
+@Singleton()
+class Database {
+  constructor(@Inject(DB_URL) private url: string) {}
+  query(sql: string) { return []; }
+}
+
+@Injectable()
+class UserRepository {
+  constructor(@Inject(Database) private db: Database) {}
+  findAll() { return this.db.query('SELECT * FROM users'); }
+}
+
+@Transient()
 class UserService {
-  constructor(@Inject('DATABASE') private db: Database) {}
+  constructor(@Inject(UserRepository) private repo: UserRepository) {}
+  listUsers() { return this.repo.findAll(); }
 }
 
-@VoltrixApp()
-class Application {
-  @GET('/users/:id')
-  async getUser(
-    @Params('id') id: string,
-    @Inject('UserService') userService: UserService
-  ) {
-    return await userService.findById(id);
-  }
-}
-```
+const container = new DIContainer();
 
-### 🛡️ Built-in Security
+container.register({ token: DB_URL, useValue: 'postgresql://localhost/app' });
+container.registerMany([Database, UserRepository, UserService]);
 
-```typescript
-@VoltrixApp()
-class SecureApplication {
-  
-  @GET('/admin/users')
-  @Role(['admin'])
-  @RateLimit({ max: 100, windowMs: 900000 })
-  async getUsers() {
-    return await this.userService.findAll();
-  }
-  
-  @POST('/api/upload')
-  @Auth({ required: true })
-  @FileStream({ maxSize: '10mb', type: ['image/*'] })
-  async uploadFile(@FileStream() file: File) {
-    return { uploaded: true, filename: file.name };
-  }
-}
-```
-
-### ✅ Multi-Validator Support
-
-```typescript
-// Zod validation
-const ZodBody = Body.extend({ validator: 'zod' });
-
-@POST('/users')
-async createUser(@ZodBody(UserSchema) user: User) {
-  return await this.userService.create(user);
-}
-
-// Class validator
-const ClassValidatorBody = Body.extend({ validator: 'class-validator' });
-
-@POST('/products')  
-async createProduct(@ClassValidatorBody() product: CreateProductDto) {
-  return await this.productService.create(product);
-}
-```
-
-## 🏗️ Application Lifecycle
-
-```typescript
-@VoltrixApp({ port: 3000 })
-class Application {
-  
-  @OnReady()
-  async onReady() {
-    console.log('🎉 Application initialized');
-  }
-  
-  @OnStart()
-  async onStart() {
-    console.log('🚀 Server started');
-  }
-  
-  @OnStop()
-  async onStop() {
-    console.log('🛑 Server stopped');
-  }
-  
-  @OnError()
-  async onError(error: Error) {
-    console.error('❌ Application error:', error);
-  }
-}
-```
-
-## 📊 Performance Benchmarks
-
-| Operation | @voltrix/decorator | tsyringe | Improvement |
-|-----------|-------------------|----------|-------------|
-| DI Resolution | 2,500,000 ops/sec | 250,000 ops/sec | **10x faster** |
-| Decorator Application | 0.01ms | 0.1ms | **10x faster** |
-| Metadata Lookup | 0.001ms | 0.01ms | **10x faster** |
-| Memory Usage | 60% less | Baseline | **40% reduction** |
-
-## 🔧 Configuration Options
-
-### Application Configuration
-
-```typescript
-@VoltrixApp({
-  port: 3000,
-  host: '0.0.0.0',
-  cors: {
-    origin: ['http://localhost:3000'],
-    credentials: true
-  },
-  middleware: [
-    corsMiddleware,
-    loggingMiddleware,
-    compressionMiddleware
-  ],
-  errorHandler: customErrorHandler,
-  timeout: 30000
-})
-```
-
-### Performance Configuration
-
-```typescript
-import { PERFORMANCE_CONFIG } from '@voltrix/decorator';
-
-// Adjust cache sizes
-PERFORMANCE_CONFIG.METADATA_CACHE_SIZE = 2000;
-PERFORMANCE_CONFIG.EXTENSION_CACHE_SIZE = 1000;
-PERFORMANCE_CONFIG.VALIDATION_CACHE_SIZE = 500;
-```
-
-## 🚀 Production Deployment
-
-```typescript
-// Production-ready setup
-const app = await createVoltrixProduction(Application, {
-  port: parseInt(process.env.PORT || '8080'),
-  host: process.env.HOST || '0.0.0.0'
+// Middleware for logging
+container.use((ctx) => {
+  const start = Date.now();
+  const result = ctx.next();
+  console.log(`Resolved ${String(ctx.token)} in ${Date.now() - start}ms`);
+  return result;
 });
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('🛑 Shutting down gracefully...');
-  await app.stop();
-  process.exit(0);
+// Lifecycle hook
+container.on(({ type, token }) => {
+  if (type === 'create') console.log(`New instance: ${String(token)}`);
 });
 
-process.on('SIGTERM', async () => {
-  console.log('🛑 Received SIGTERM, shutting down...');
-  await app.stop();
-  process.exit(0);
-});
+const service = container.get(UserService);
+service.listUsers();
+
+// Cleanup
+container.clear();
 ```
 
-## 🏗️ Architecture
+## API Reference
 
-Voltrix follows a **modular architecture** pattern:
+### `DIContainer`
 
-```
-App → Module → Controller → Function
-```
+| Method | Description |
+|---|---|
+| `new DIContainer(parent?, options?)` | Create a container. Pass a parent to create a child. Pass `{ autoInject: true }` to enable type-based auto-injection. |
+| `createChild()` | Create a child container that inherits this container's registrations. |
+| `register(descriptor)` | Register a single provider. |
+| `registerMany(classes)` | Batch-register an array of decorated classes. |
+| `get(token)` | Resolve a token, throwing `ProviderNotFoundError` if not found. |
+| `resolve(token)` | Alias for `get()`. |
+| `has(token)` | Return `true` if the token is registered. |
+| `dispose(token)` | Call `dispose()`, `destroy()`, or `close()` on the resolved instance. |
+| `clear()` | Dispose and remove all instances. |
+| `use(middleware)` | Register a resolution middleware. |
+| `on(hook)` | Register a lifecycle hook. |
 
-### Controller Decorator (NEW)
-Similar to `@HyperController`, group related routes:
+### Registration Descriptor Fields
 
-```typescript
-@Controller('v1')
-class UserController {
-  @GET('/users')
-  async getUsers() {}
-}
-// Generates: GET /v1/users
-```
+| Field | Alias | Description |
+|---|---|---|
+| `token` | `provide` | The injection token (class, string, or symbol). |
+| `useClass` | — | Class to instantiate. |
+| `useValue` | — | Constant value to return. |
+| `useFactory` | — | Function `(container) => value` called to produce the value. |
+| `useExisting` | `useToken` | Token to delegate resolution to. |
+| `scope` | — | `'singleton'` (default for decorated classes), `'transient'`, or `'scoped'`. |
 
-### Custom Decorators (NEW)
-Create decorators like `@Parser`:
+## License
 
-```typescript
-const Parser = createCustomRequestDecorator<{
-  schema?: any;
-  validate?: boolean;
-}>('parser', { validate: true });
-
-@Parser({ schema: userSchema })
-async createUser(@Body() data: any) {}
-```
-
-## 📊 Performance
-
-- **10x faster** than tsyringe DI
-- **40% less memory** usage
-- **141/141 tests** passing
-- **Production-ready** performance
-
-## 📚 Documentation & Examples
-
-### Examples Directory
-- **`examples/basic-usage.ts`** - Getting started
-- **`examples/working-controller-example.ts`** - Controller & custom decorators
-- **`examples/comprehensive-example.ts`** - Advanced patterns
-
-### Run Examples
-```bash
-npx tsx examples/working-controller-example.ts
-```
-
-## 🤖 AI Development Guidelines
-
-**For AI Agents, Bots & Contributors**: This framework follows specific architectural patterns and coding standards:
-
-- **📋 Rules**: Read [`.ai-context/rules.md`](.ai-context/rules.md) for coding guidelines
-- **🏗️ Architecture**: See [`.ai-context/framework-architecture.md`](.ai-context/framework-architecture.md) for system design
-- **🧠 Knowledge**: Check [`.ai-context/framework-knowledge.md`](.ai-context/framework-knowledge.md) for current implementation status
-- **🧪 Testing**: Follow [`.ai-context/tasks/testing-new-components.md`](.ai-context/tasks/testing-new-components.md) for test patterns
-- **📋 Tasks**: Browse [`.ai-context/tasks/`](.ai-context/tasks/) for implementation guides
-
-The `.ai-context/` directory contains all necessary information for understanding, contributing to, and extending this framework.
-
-## 🤝 Contributing
-
-1. **Read the AI Context** - Start with [`.ai-context/rules.md`](.ai-context/rules.md)
-2. **Fork & Branch** - Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. **Follow Patterns** - Use established decorator and testing patterns
-4. **Test Everything** - Maintain 90%+ test coverage
-5. **Document Changes** - Update relevant `.ai-context/` files
-6. **Submit PR** - Include test results and performance impact
-
-## 📄 License
-
-MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-**Built with ⚡ by the Voltrix team for high-performance applications.**
-
-> 🎯 **Framework Status**: Production-ready with full modular architecture, custom decorator support, and comprehensive testing (141/141 tests passing)
+MIT
