@@ -1,3 +1,4 @@
 {
-    "dependi.npm.lockFileEnabled": false
+    "dependi.npm.lockFileEnabled": false,
+    "js/ts.tsdk.path": "node_modules\\typescript\\lib"
 }
