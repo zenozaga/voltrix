@@ -21,9 +21,10 @@ const CONNECTIONS = 100;  // concurrent connections
 const PIPELINING = 1;
 
 const SERVERS_SINGLE = [
-  { name: 'Pure Node (1c)',   worker: 'workers/pure.worker.mjs',    port: 4001 },
-  { name: 'uWS (1c)',         worker: 'workers/uws.worker.mjs',     port: 4002 },
-  { name: 'Voltrix (1c)',     worker: 'workers/voltrix.worker.mjs', port: 4003 },
+  { name: 'Pure Node (1c)',      worker: 'workers/pure.worker.mjs',           port: 4001 },
+  { name: 'uWS (1c)',            worker: 'workers/uws.worker.mjs',            port: 4002 },
+  { name: 'Voltrix (1c)',        worker: 'workers/voltrix.worker.mjs',        port: 4003 },
+  { name: '@voltrix/server (1c)', worker: 'workers/voltrix-server.worker.mjs', port: 4004 },
 ];
 
 const SERVERS_MULTI = [
