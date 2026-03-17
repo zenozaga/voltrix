@@ -1,5 +1,6 @@
 import { SecurityRegistry, type IRequest, type IResponse } from '@voltrix/core';
 import { DecoratorFactory } from '../__internal/decorator-factory.js';
+import { CUSTOM_KEYS } from '../__internal/metadata-registry.js';
 
 /**
  * 🚀 Scope Decorators for Voltrix
@@ -25,7 +26,7 @@ export function Scope(optionsOrFirstScope: string | ScopeOptions, ...remainingSc
 
   return DecoratorFactory.create({
     type: 'custom',
-    key: 'scopes',
+    key: CUSTOM_KEYS.SCOPES,
     value: options,
   });
 }

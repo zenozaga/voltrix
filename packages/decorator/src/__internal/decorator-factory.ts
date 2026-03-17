@@ -1,5 +1,5 @@
 import { META } from '@voltrix/injector';
-import { MetadataRegistry, Constructor } from './metadata-registry.js';
+import { MetadataRegistry, Constructor, CLASS_KEY } from './metadata-registry.js';
 
 /**
  * Decorator types for categorization
@@ -69,7 +69,7 @@ export const DecoratorFactory = {
           break;
 
         case 'middleware':
-          const key = propertyKey || '@@global';
+          const key = propertyKey || CLASS_KEY;
           const list = bag.middlewares.get(key) || [];
           list.push(config.value);
           bag.middlewares.set(key, list);
@@ -77,7 +77,7 @@ export const DecoratorFactory = {
 
         case 'custom':
           if (!config.key) throw new Error('Custom decorators must provide a unique key.');
-          const customKey = propertyKey || '@@global';
+          const customKey = propertyKey || CLASS_KEY;
           const customMap = bag.custom.get(customKey) || new Map();
           customMap.set(config.key, config.value);
           bag.custom.set(customKey, customMap);

@@ -211,12 +211,28 @@ function createSpecializedResolver(bag: MetadataBag, key: string | symbol, app: 
   const params = bag.parameters.get(key) || [];
 
   const mappers = params.map(p => {
-    let baseResolver: (req: IRequest, res: IResponse) => any;
+    const needsAsync = p.schema || p.transform || p.type === 'body' || p.type === 'custom';
 
+    if (!needsAsync) {
+      // Sync fast-path: query, param, header, req, res never await
+      let syncResolver: (req: IRequest, res: IResponse) => any;
+      switch (p.type) {
+        case 'query': syncResolver = (req) => p.key ? req.query[p.key] : req.query; break;
+        case 'param': syncResolver = (req) => req.getParam(p.key!) || req.params[p.key!]; break;
+        case 'header': syncResolver = (req) => req.header(p.key!); break;
+        case 'req': syncResolver = (req) => req; break;
+        case 'res': syncResolver = (_, res) => res; break;
+        default: syncResolver = () => undefined;
+      }
+      return syncResolver;
+    }
+
+    // Async path: body, custom, or when schema/transform is present
+    let baseResolver: (req: IRequest, res: IResponse) => any;
     switch (p.type) {
       case 'body': baseResolver = (req) => req.json(); break;
       case 'query': baseResolver = (req) => p.key ? req.query[p.key] : req.query; break;
-      case 'param': baseResolver = (req) => req.getParam(p.key!) || req.params[p.key!]; break; // Support both
+      case 'param': baseResolver = (req) => req.getParam(p.key!) || req.params[p.key!]; break;
       case 'header': baseResolver = (req) => req.header(p.key!); break;
       case 'req': baseResolver = (req) => req; break;
       case 'res': baseResolver = (_, res) => res; break;
@@ -239,7 +255,8 @@ function createSpecializedResolver(bag: MetadataBag, key: string | symbol, app: 
   return async (req: IRequest, res: IResponse) => {
     const args = new Array(params.length);
     for (let i = 0; i < params.length; i++) {
-      args[params[i]!.index] = await mappers[i]!(req, res);
+      const result = mappers[i]!(req, res);
+      args[params[i]!.index] = result instanceof Promise ? await result : result;
     }
     return args;
   };

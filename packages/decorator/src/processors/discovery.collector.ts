@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { MetadataRegistry } from '../__internal/metadata-registry.js';
+import { MetadataRegistry, CLASS_KEY, CUSTOM_KEYS } from '../__internal/metadata-registry.js';
 import { Constructor, AppTree, ModuleNode, ControllerNode, SecurityRegistry, Metadata } from '@voltrix/core';
 
 /**
@@ -26,8 +26,8 @@ export const DiscoveryCollector = {
 
     const { name = 'VoltrixApp', modules = [], prefix = '', middlewares = [] } = bag.options;
     
-    const appScopes = bag.custom.get('@@global')?.get('scopes');
-    const appRoles = bag.custom.get('@@global')?.get('roles');
+    const appScopes = bag.custom.get(CLASS_KEY)?.get(CUSTOM_KEYS.SCOPES);
+    const appRoles = bag.custom.get(CLASS_KEY)?.get(CUSTOM_KEYS.ROLES);
 
     if (appScopes?.scopes) SecurityRegistry.registerScopes(appScopes.scopes);
     if (appRoles?.roles) SecurityRegistry.registerRoles(appRoles.roles);
@@ -35,7 +35,7 @@ export const DiscoveryCollector = {
     const initialContext: ProcessorContext = {
       middlewares: [
         ...(middlewares || []),
-        ...(bag.middlewares.get('@@global') || [])
+        ...(bag.middlewares.get(CLASS_KEY) || [])
       ],
       scopes: appScopes?.scopes || [],
       roles: appRoles?.roles || [],
@@ -59,15 +59,15 @@ export const DiscoveryCollector = {
     const { path = '', controllers = [], modules = [], prefix = '', middlewares = [] } = bag.options;
     const fullPath = (parentPath + '/' + prefix + '/' + path).replace(/\/+/g, '/');
 
-    const modScopes = bag.custom.get('@@global')?.get('scopes');
-    const modRoles = bag.custom.get('@@global')?.get('roles');
+    const modScopes = bag.custom.get(CLASS_KEY)?.get(CUSTOM_KEYS.SCOPES);
+    const modRoles = bag.custom.get(CLASS_KEY)?.get(CUSTOM_KEYS.ROLES);
 
     if (modScopes?.scopes) SecurityRegistry.registerScopes(modScopes.scopes);
     if (modRoles?.roles) SecurityRegistry.registerRoles(modRoles.roles);
 
     const modMiddlewares = [
       ...(middlewares || []),
-      ...(bag.middlewares.get('@@global') || [])
+      ...(bag.middlewares.get(CLASS_KEY) || [])
     ];
 
     const modContext: ProcessorContext = {
@@ -115,15 +115,15 @@ export const DiscoveryCollector = {
     const { path = '', middlewares = [] } = bag.options;
     const fullPath = (parentPath + '/' + path).replace(/\/+/g, '/');
 
-    const ctrlScopes = bag.custom.get('@@global')?.get('scopes');
-    const ctrlRoles = bag.custom.get('@@global')?.get('roles');
+    const ctrlScopes = bag.custom.get(CLASS_KEY)?.get(CUSTOM_KEYS.SCOPES);
+    const ctrlRoles = bag.custom.get(CLASS_KEY)?.get(CUSTOM_KEYS.ROLES);
 
     if (ctrlScopes?.scopes) SecurityRegistry.registerScopes(ctrlScopes.scopes);
     if (ctrlRoles?.roles) SecurityRegistry.registerRoles(ctrlRoles.roles);
 
     const ctrlMiddlewares = [
       ...(middlewares || []),
-      ...(bag.middlewares.get('@@global') || [])
+      ...(bag.middlewares.get(CLASS_KEY) || [])
     ];
 
     const ctrlContext: ProcessorContext = {
@@ -148,8 +148,8 @@ export const DiscoveryCollector = {
     for (const [key, route] of bag.routes) {
       const routePath = (fullPath + '/' + route.path).replace(/\/+/g, '/');
       
-      const routeScopes = bag.custom.get(key)?.get('scopes');
-      const routeRoles = bag.custom.get(key)?.get('roles');
+      const routeScopes = bag.custom.get(key)?.get(CUSTOM_KEYS.SCOPES);
+      const routeRoles = bag.custom.get(key)?.get(CUSTOM_KEYS.ROLES);
 
       if (routeScopes?.scopes) SecurityRegistry.registerScopes(routeScopes.scopes);
       if (routeRoles?.roles) SecurityRegistry.registerRoles(routeRoles.roles);

@@ -53,10 +53,25 @@ export interface MetadataBag {
 }
 
 /**
- * High-performance Discovery Registry
- * NOW STATELESS: Relying on @voltrix/core Unified Metadata System
+ * Key used to store the MetadataBag on the class-level metadata record.
  */
 const BAG_KEY = 'voltrix:bag';
+
+/**
+ * Key used to scope class-level (vs method-level) metadata in all Maps inside MetadataBag.
+ * Export this instead of scattering the '@@global' literal everywhere.
+ */
+export const CLASS_KEY = '@@global';
+
+/**
+ * Keys used in bag.custom to store security metadata.
+ * Using constants prevents silent typo bugs.
+ */
+export const CUSTOM_KEYS = {
+  SCOPES: 'scopes',
+  ROLES: 'roles',
+  PUBLIC: 'public',
+} as const;
 
 export class MetadataRegistry {
   /**

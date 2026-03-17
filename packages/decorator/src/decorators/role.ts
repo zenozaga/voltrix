@@ -1,5 +1,6 @@
 import { SecurityRegistry, type IRequest, type IResponse } from '@voltrix/core';
 import { DecoratorFactory } from '../__internal/decorator-factory.js';
+import { CUSTOM_KEYS } from '../__internal/metadata-registry.js';
 
 /**
  * 🚀 Role Decorators for Voltrix
@@ -22,7 +23,7 @@ export function Role(optionsOrFirstRole: string | RoleOptions, ...remainingRoles
 
   return DecoratorFactory.create({
     type: 'custom',
-    key: 'roles',
+    key: CUSTOM_KEYS.ROLES,
     value: options,
   });
 }
@@ -35,7 +36,7 @@ Role.getAll = () => SecurityRegistry.getAllRoles();
 export function Public() {
   return DecoratorFactory.create({
     type: 'custom',
-    key: 'public',
+    key: CUSTOM_KEYS.PUBLIC,
     value: true,
   });
 }
