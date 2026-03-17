@@ -3,7 +3,7 @@ import { CtxPool } from './context/pool.js';
 import { Ctx } from './context/context.js';
 import { RadixTree } from './router/radix-tree.js';
 import { RouteRegistry } from './router/route-registry.js';
-import { Router, createRouter } from './router/router.js';
+import { Router } from './router/router.js';
 import { RouteBuilder } from './router/route-builder.js';
 import { PluginManager } from './plugins/plugin-manager.js';
 import { emptyHookSet } from './hooks/hook-types.js';
@@ -13,7 +13,7 @@ import { defaultSerializerCompiler } from './serializers/default.js';
 import { isHttpError } from './errors/http-error.js';
 import { CONTENT_TYPES } from './common/constants.js';
 import type { RouteHandler, CompiledRoute } from './router/route-definition.js';
-import type { HookSet } from './hooks/hook-types.js';
+import type { HookSet, OnRequestHook, PreHandlerHook, OnResponseHook, OnErrorHook } from './hooks/hook-types.js';
 import type { SerializerCompiler } from './serializers/types.js';
 import type { ValidatorCompiler } from './validators/types.js';
 import type { VoltrixPlugin } from './plugins/plugin-types.js';
@@ -65,6 +65,7 @@ export class VoltrixServer {
   private readonly _validatorRef:  { value: ValidatorCompiler | undefined };
 
   private _listenSocket: uWS.us_listen_socket | null = null;
+  private _notFoundHandler: RouteHandler | null = null;
 
   constructor(opts: VoltrixServerOptions = {}) {
     this._app      = opts.uwsOptions
@@ -103,6 +104,20 @@ export class VoltrixServer {
 
   addHook<K extends keyof HookSet>(name: K, hook: HookSet[K][number]): this {
     (this._globalHooks[name] as unknown[]).push(hook);
+    return this;
+  }
+
+  onRequest(hook: OnRequestHook):   this { return this.addHook('onRequest',  hook); }
+  preHandler(hook: PreHandlerHook): this { return this.addHook('preHandler', hook); }
+  onResponse(hook: OnResponseHook): this { return this.addHook('onResponse', hook); }
+  onError(hook: OnErrorHook):       this { return this.addHook('onError',    hook); }
+
+  /**
+   * Register a custom handler for unmatched routes (404).
+   * If not set, a default JSON 404 response is sent.
+   */
+  notFound(handler: RouteHandler): this {
+    this._notFoundHandler = handler;
     return this;
   }
 
@@ -251,11 +266,26 @@ export class VoltrixServer {
     }
 
     // Catch-all 404 — registered last so specific patterns take priority
-    this._app.any('/*', (res) => {
-      res.writeStatus('404 Not Found');
-      res.writeHeader('Content-Type', CONTENT_TYPES.JSON);
-      res.end('{"statusCode":404,"code":"NOT_FOUND","message":"Not Found"}');
-    });
+    if (this._notFoundHandler) {
+      const handler = this._notFoundHandler;
+      this._app.any('/*', async (res, req) => {
+        const ctx = this._pool.acquire(res, req, {});
+        try {
+          await handler(ctx);
+          if (!ctx.sent && !ctx.aborted) ctx.status(404).end();
+        } catch (err) {
+          if (!ctx.sent && !ctx.aborted) await this._sendError(ctx, err);
+        } finally {
+          this._pool.release(ctx);
+        }
+      });
+    } else {
+      this._app.any('/*', (res) => {
+        res.writeStatus('404 Not Found');
+        res.writeHeader('Content-Type', CONTENT_TYPES.JSON);
+        res.end('{"statusCode":404,"code":"NOT_FOUND","message":"Not Found"}');
+      });
+    }
   }
 
   /**
