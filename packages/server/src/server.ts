@@ -24,11 +24,7 @@ export interface VoltrixServerOptions {
   /** Initial Ctx pool size. Default: 64. */
   poolSize?: number;
   /** Enable SSL/TLS. Provide cert and key paths. */
-  ssl?: {
-    cert: string;
-    key:  string;
-    ca?:  string;
-  };
+  uwsOptions?: uWS.AppOptions;
 }
 
 export interface ListenOptions {
@@ -71,8 +67,8 @@ export class VoltrixServer {
   private _listenSocket: uWS.us_listen_socket | null = null;
 
   constructor(opts: VoltrixServerOptions = {}) {
-    this._app      = opts.ssl
-      ? uWS.SSLApp({ cert_file_name: opts.ssl.cert, key_file_name: opts.ssl.key, ca_file_name: opts.ssl.ca })
+    this._app      = opts.uwsOptions
+      ? uWS.App(opts.uwsOptions)
       : uWS.App();
 
     this._pool     = new CtxPool(opts.poolSize ?? 64);

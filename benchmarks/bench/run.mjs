@@ -28,8 +28,9 @@ const SERVERS_SINGLE = [
 ];
 
 const SERVERS_MULTI = [
-  { name: `Pure Cluster (${NUM_CORES}c)`, worker: 'workers/pure.cluster.worker.mjs', port: 4011 },
-  { name: `uWS MT (${NUM_CORES}c)`,       worker: 'workers/uws.mt.worker.mjs',       port: 4012 },
+  { name: `Pure Cluster (${NUM_CORES}c)`,    worker: 'workers/pure.cluster.worker.mjs',        port: 4011 },
+  { name: `uWS MT (${NUM_CORES}c)`,          worker: 'workers/uws.mt.worker.mjs',               port: 4012 },
+  { name: `@voltrix/server MT (${NUM_CORES}c)`, worker: 'workers/voltrix-server.mt.worker.mjs', port: 4013 },
 ];
 
 const SCENARIOS = [

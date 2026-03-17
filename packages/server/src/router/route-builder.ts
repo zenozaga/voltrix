@@ -1,10 +1,10 @@
-import type { RouteHandler, RouteMeta, RouteDefinition } from './route-definition.js';
-import type { HookSet } from '../hooks/hook-types.js';
-import type { SerializerCompiler, RouteSerializer } from '../serializers/types.js';
 import type { ValidatorCompiler, RouteValidators, RouteSchemas } from '../validators/types.js';
-import { emptyHookSet } from '../hooks/hook-types.js';
 import type { OnRequestHook, PreHandlerHook, OnSendHook, OnResponseHook, OnErrorHook } from '../hooks/hook-types.js';
+import type { RouteHandler, RouteMeta, RouteDefinition } from './route-definition.js';
+import type { SerializerCompiler, RouteSerializer } from '../serializers/types.js';
 import type { HttpMethod } from '../common/constants.js';
+import { emptyHookSet } from '../hooks/hook-types.js';
+import type { HookSet } from '../hooks/hook-types.js';
 
 /**
  * Fluent builder for a single route definition.

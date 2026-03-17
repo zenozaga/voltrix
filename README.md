@@ -21,7 +21,8 @@ Single-core, 100 concurrent connections, autocannon, loopback:
 
 | Package | Description |
 |---|---|
-| [`@voltrix/express`](packages/express) | Core HTTP server — routing, middleware, request/response |
+| [`@voltrix/server`](packages/server) | Ultra-fast HTTP server core — unified ctx, pre-classified hooks, radix tree, plugins |
+| [`@voltrix/express`](packages/express) | Express-compatible adapter on top of `@voltrix/server` |
 | [`@voltrix/decorator`](packages/decorator) | TypeScript decorators for controllers, routes, and params |
 | [`@voltrix/injector`](packages/injector) | Dependency injection container with `reflect-metadata` |
 | [`@voltrix/swagger`](packages/swagger) | OpenAPI 3.0 spec generator — programmatic and decorator APIs |
