@@ -269,7 +269,8 @@ export class VoltrixServer {
     if (this._notFoundHandler) {
       const handler = this._notFoundHandler;
       this._app.any('/*', async (res, req) => {
-        const ctx = this._pool.acquire(res, req, {});
+        const url = req.getUrl();
+        const ctx = this._pool.acquire(res, req, {}, req.getMethod().toUpperCase(), url);
         try {
           await handler(ctx);
           if (!ctx.sent && !ctx.aborted) ctx.status(404).end();
@@ -319,8 +320,6 @@ export class VoltrixServer {
     const url   = req.getUrl();
     const match = this._tree.match(method, url);
 
-    // Not found — uWS already matched the pattern, this should never happen
-    // unless multiple patterns overlap. Defensive fallback.
     if (!match) {
       res.writeStatus('404 Not Found');
       res.writeHeader('Content-Type', CONTENT_TYPES.JSON);
@@ -328,48 +327,30 @@ export class VoltrixServer {
       return;
     }
 
-    // Build params map from names + extracted values
     const params = buildParams(match.route.paramNames, match.paramValues);
-
-    // Acquire a pooled Ctx — this captures all req data synchronously
-    const ctx = this._pool.acquire(res, req, params);
+    // Pass method + url already resolved — avoids two redundant C++ calls inside initialize()
+    const ctx    = this._pool.acquire(res, req, params, method, url);
 
     try {
-      // Validate request if validators are configured
-      if (match.route.validators) {
-        runValidators(ctx, match.route.validators);
-      }
+      if (match.route.validators) runValidators(ctx, match.route.validators);
 
-      // onRequest pipeline
       await match.route.onRequest(ctx);
       if (ctx.sent || ctx.aborted) return;
 
-      // preHandler pipeline
       await match.route.preHandler(ctx);
       if (ctx.sent || ctx.aborted) return;
 
-      // Route handler
       const result = await match.route.handler(ctx);
 
-      // If handler returned a value without sending, auto-serialize it
       if (!ctx.sent && !ctx.aborted && result !== undefined) {
-        const serialize = match.route.serializer?.serialize;
-        ctx.json(result, serialize);
+        ctx.json(result, match.route.serializer?.serialize);
       }
 
-      // Safeguard: if handler returned undefined without sending, close cleanly
-      if (!ctx.sent && !ctx.aborted) {
-        ctx.status(204).end();
-      }
+      if (!ctx.sent && !ctx.aborted) ctx.status(204).end();
 
-      // onResponse pipeline
-      if (!ctx.aborted) {
-        await match.route.onResponse(ctx);
-      }
+      if (!ctx.aborted) await match.route.onResponse(ctx);
     } catch (err) {
-      if (!ctx.sent && !ctx.aborted) {
-        await this._sendError(ctx, err);
-      }
+      if (!ctx.sent && !ctx.aborted) await this._sendError(ctx, err);
     } finally {
       this._pool.release(ctx);
     }
@@ -421,11 +402,6 @@ function toUwsPattern(pattern: string): string {
   return pattern;
 }
 
-/**
- * Build a params Record from parallel arrays of names and values.
- * @param names  - Parameter names in declaration order.
- * @param values - Extracted values from the radix tree match.
- */
 function buildParams(names: string[], values: string[]): Record<string, string> {
   if (names.length === 0) return {};
   const params: Record<string, string> = {};

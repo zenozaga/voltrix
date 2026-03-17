@@ -88,10 +88,10 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    * uWS constraint: `req` is only valid synchronously. All req data must be
    * captured here, before any await boundary.
    */
-  initialize(res: HttpResponse, req: HttpRequest, params: P): void {
+  initialize(res: HttpResponse, req: HttpRequest, params: P, method: string, url: string): void {
     this._res         = res;
-    this._method      = req.getMethod().toUpperCase();
-    this._url         = req.getUrl();
+    this._method      = method;
+    this._url         = url;
     this._params      = params;
     this._queryRaw    = req.getQuery() ?? '';
     this._query       = null;
