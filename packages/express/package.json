@@ -32,7 +32,7 @@
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.60.0"
   },
   "devDependencies": {
-    "@types/node": "^20.10.0",
+    "@types/node": "^22.19.15",
     "@voltrix/core": "workspace:*",
     "tsx": "^4.21.0",
     "typescript": "5.9.3",
