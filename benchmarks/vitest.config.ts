@@ -8,6 +8,7 @@ export default defineConfig({
     environment: 'node',
     benchmark: {
       include: ['**/*.bench.{ts,js}'],
+      reporters: ['verbose'],
     },
     alias: {
       '@voltrix/decorator': resolve(__dirname, '../packages/decorator/src/index.ts'),

@@ -5,7 +5,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "bench": "vitest --bench"
+    "bench": "node bench/run.mjs",
+    "bench:vitest": "vitest bench --run"
   },
   "dependencies": {
     "@hapi/hapi": "^21.4.3",

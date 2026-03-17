@@ -169,25 +169,25 @@ export class Response implements IResponse {
     this._sent = true;
 
     const payload = normalizeBodyForUWS(body);
+    const statusLine = STATUS_LINES[this._statusCode] || `${this._statusCode} ${STATUS_TEXT[this._statusCode as StatusCode] || 'Unknown'}`;
 
-    this.raw.cork(() => {
-      const statusLine = STATUS_LINES[this._statusCode] || `${this._statusCode} ${STATUS_TEXT[this._statusCode as StatusCode] || 'Unknown'}`;
-      this.raw.writeStatus(statusLine);
+    // Note: do NOT use cork() + end(payload) together — uWS v20.60 adds
+    // Content-Length twice in that combination (once in end(), once on cork flush).
+    // Writing headers directly and calling end(payload) produces a single CL header.
+    this.raw.writeStatus(statusLine);
 
-      // Ensure standard headers are present if not already set
-      if (!this.header('Content-Type')) {
-        this.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      }
+    if (!this.header('Content-Type')) {
+      this.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    }
 
-      const names = this._headerNames;
-      const headers = this._headers;
-      for (let i = 0; i < names.length; i++) {
-        this.raw.writeHeader(names[i], headers[names[i]]);
-      }
+    const names = this._headerNames;
+    const headers = this._headers;
+    for (let i = 0; i < names.length; i++) {
+      this.raw.writeHeader(names[i], headers[names[i]]);
+    }
 
-      this.raw.end(payload);
-      this.finished();
-    });
+    this.raw.end(payload);
+    this.finished();
   }
 
   // ============================================
