@@ -1,0 +1,68 @@
+{
+  "name": "@voltrix/server",
+  "version": "0.1.0",
+  "description": "Ultra-fast standalone HTTP server core — unified context, pre-classified hooks, radix tree routing, plugin system",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": [
+    "voltrix",
+    "server",
+    "http",
+    "uwebsockets",
+    "fast",
+    "performance",
+    "typescript",
+    "radix-tree",
+    "hooks",
+    "plugins"
+  ],
+  "author": "@zenozaga",
+  "license": "MIT",
+  "dependencies": {
+    "tslib": "^2.8.1",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.60.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zenozaga/voltrix.git",
+    "directory": "packages/server"
+  },
+  "bugs": {
+    "url": "https://github.com/zenozaga/voltrix/issues"
+  },
+  "homepage": "https://github.com/zenozaga/voltrix/tree/main/packages/server#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
