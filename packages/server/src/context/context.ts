@@ -169,7 +169,7 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    */
   async buffer(): Promise<Buffer> {
     if (!this._bodyLoaded) {
-      this._bodyBuffer = await readBody(this._res);
+      this._bodyBuffer = await readBody(this._res, getContentLength(this._reqHeaders));
       this._bodyLoaded = true;
     }
     return this._bodyBuffer!;
@@ -315,4 +315,11 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
     }
     return false;
   }
+}
+
+function getContentLength(headers: Record<string, string>): number | undefined {
+  const raw = headers['content-length'];
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }

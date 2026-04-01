@@ -5,24 +5,25 @@ import type { Ctx } from '../context/context.js';
 type CtxHook = (ctx: Ctx) => void | Promise<void>;
 
 /**
- * A compiled pipeline — the optimal runner for a fixed set of hooks.
+ * A compiled pipeline — the public Promise-based runner.
  * Created once per route at startup.
  */
 export type CompiledPipeline = (ctx: Ctx) => Promise<void>;
 
+/**
+ * Internal fast pipeline used by the server hot path.
+ * Returns void for fully sync routes to avoid Promise churn.
+ */
+export type InlinePipeline = (ctx: Ctx) => void | Promise<void>;
+
 /** The resolved empty pipeline — single shared Promise.resolve(). */
 const EMPTY_PIPELINE: CompiledPipeline = (_ctx: Ctx) => Promise.resolve();
+/** Shared no-op for sync fast path. */
+const EMPTY_INLINE_PIPELINE: InlinePipeline = (_ctx: Ctx) => {};
 
 /**
- * Compiles a hook array into the optimal pipeline runner.
- *
- * Performance tiers (5 hooks, 500k iterations from benchmark):
- *   EMPTY:  single Promise.resolve()       — ~19M ops/s
- *   SYNC:   tight loop + Promise.resolve() — ~19M ops/s
- *   MIXED:  thenable check per hook        — ~17M ops/s
- *   ASYNC:  await each hook                — ~4M ops/s
- *
- * @param hooks - Array of hooks to compile. Must be stable (not mutated after compile).
+ * Compiles a hook array into the optimal Promise-based pipeline runner.
+ * Kept for the public API and tests.
  */
 export function compilePipeline(hooks: CtxHook[]): CompiledPipeline {
   const cls = classifyHooks(hooks as Function[]);
@@ -42,12 +43,30 @@ export function compilePipeline(hooks: CtxHook[]): CompiledPipeline {
   }
 }
 
-// ─── Tier implementations ─────────────────────────────────────────────────────
-
 /**
- * SYNC tier: tight loop, zero Promise allocation per hook.
- * Returns a single Promise.resolve() at the end to satisfy the async boundary.
+ * Compiles a hook array into the inline runner used by the server hot path.
+ * Sync pipelines return immediately; async pipelines still return a Promise.
  */
+export function compileInlinePipeline(hooks: CtxHook[]): InlinePipeline {
+  const cls = classifyHooks(hooks as Function[]);
+
+  switch (cls) {
+    case HookClass.EMPTY:
+      return EMPTY_INLINE_PIPELINE;
+
+    case HookClass.SYNC:
+      return compileInlineSyncPipeline(hooks);
+
+    case HookClass.MIXED:
+      return compileInlineMixedPipeline(hooks);
+
+    case HookClass.ASYNC:
+      return compileInlineAsyncPipeline(hooks);
+  }
+}
+
+// ─── Public Promise-based implementations ───────────────────────────────────
+
 function compileSyncPipeline(hooks: CtxHook[]): CompiledPipeline {
   const len = hooks.length;
   return function runSync(ctx: Ctx): Promise<void> {
@@ -62,27 +81,18 @@ function compileSyncPipeline(hooks: CtxHook[]): CompiledPipeline {
   };
 }
 
-/**
- * MIXED tier: thenable check — only await when the hook actually returns a Promise.
- * Sync hooks pay zero async overhead; async hooks pay one microtask tick.
- * Proven at 17M ops/s for all-sync workloads in the async-patterns benchmark.
- */
 function compileMixedPipeline(hooks: CtxHook[]): CompiledPipeline {
   const len = hooks.length;
   return async function runMixed(ctx: Ctx): Promise<void> {
     for (let i = 0; i < len; i++) {
       const r = hooks[i](ctx);
-      if (r !== null && r !== undefined && typeof (r as Promise<void>).then === 'function') {
+      if (isThenable(r)) {
         await r;
       }
     }
   };
 }
 
-/**
- * ASYNC tier: await each hook — honest cost for fully async pipelines.
- * Use when all hooks are declared async (e.g. auth, rate limit, DB lookups).
- */
 function compileAsyncPipeline(hooks: CtxHook[]): CompiledPipeline {
   const len = hooks.length;
   return async function runAsync(ctx: Ctx): Promise<void> {
@@ -90,4 +100,57 @@ function compileAsyncPipeline(hooks: CtxHook[]): CompiledPipeline {
       await hooks[i](ctx);
     }
   };
+}
+
+// ─── Internal inline implementations ────────────────────────────────────────
+
+function compileInlineSyncPipeline(hooks: CtxHook[]): InlinePipeline {
+  const len = hooks.length;
+  return function runInlineSync(ctx: Ctx): void {
+    for (let i = 0; i < len; i++) {
+      (hooks[i] as (ctx: Ctx) => void)(ctx);
+    }
+  };
+}
+
+function compileInlineMixedPipeline(hooks: CtxHook[]): InlinePipeline {
+  const len = hooks.length;
+  return function runInlineMixed(ctx: Ctx): void | Promise<void> {
+    for (let i = 0; i < len; i++) {
+      const r = hooks[i](ctx);
+      if (isThenable(r)) {
+        return resumeInlineMixedPipeline(hooks, ctx, i + 1, r, len);
+      }
+    }
+  };
+}
+
+function compileInlineAsyncPipeline(hooks: CtxHook[]): InlinePipeline {
+  const len = hooks.length;
+  return async function runInlineAsync(ctx: Ctx): Promise<void> {
+    for (let i = 0; i < len; i++) {
+      await hooks[i](ctx);
+    }
+  };
+}
+
+function resumeInlineMixedPipeline(
+  hooks: CtxHook[],
+  ctx: Ctx,
+  startIdx: number,
+  pending: Promise<void>,
+  len: number,
+): Promise<void> {
+  return pending.then(() => {
+    for (let i = startIdx; i < len; i++) {
+      const r = hooks[i](ctx);
+      if (isThenable(r)) {
+        return resumeInlineMixedPipeline(hooks, ctx, i + 1, r, len);
+      }
+    }
+  });
+}
+
+function isThenable(value: void | Promise<void>): value is Promise<void> {
+  return value !== null && value !== undefined && typeof (value as Promise<void>).then === 'function';
 }

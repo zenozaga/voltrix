@@ -13,7 +13,11 @@ import { concatChunks } from '../common/normalize.js';
  *
  * @internal — called once per request when the body is first accessed.
  */
-export function readBody(res: HttpResponse): Promise<Buffer> {
+export function readBody(res: HttpResponse, expectedLength?: number): Promise<Buffer> {
+  if (expectedLength !== undefined && Number.isInteger(expectedLength) && expectedLength >= 0) {
+    return readBodyWithKnownLength(res, expectedLength);
+  }
+
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Uint8Array[] = [];
 
@@ -29,6 +33,31 @@ export function readBody(res: HttpResponse): Promise<Buffer> {
 
       if (isLast) {
         resolve(concatChunks(chunks));
+      }
+    });
+  });
+}
+
+function readBodyWithKnownLength(res: HttpResponse, expectedLength: number): Promise<Buffer> {
+  if (expectedLength === 0) {
+    return Promise.resolve(Buffer.alloc(0));
+  }
+
+  return new Promise<Buffer>((resolve, reject) => {
+    const buffer = Buffer.allocUnsafe(expectedLength);
+    let offset = 0;
+
+    res.onAborted(() => {
+      reject(new Error('Request aborted before body was fully read'));
+    });
+
+    res.onData((ab: ArrayBuffer, isLast: boolean) => {
+      const chunk = new Uint8Array(ab);
+      buffer.set(chunk, offset);
+      offset += chunk.byteLength;
+
+      if (isLast) {
+        resolve(offset === expectedLength ? buffer : buffer.subarray(0, offset));
       }
     });
   });
