@@ -1,0 +1,70 @@
+{
+  "files": [
+    {
+      "filepath": "D:/zenozaga/Github/accounts/zenozaga/projects/@zenofolio/voltrix/benchmarks/bench/voltrix-server.bench.ts",
+      "groups": [
+        {
+          "fullName": "bench/voltrix-server.bench.ts > @voltrix/server",
+          "benchmarks": [
+            {
+              "id": "1735184924_0_0",
+              "name": "GET /ping — minimal JSON (hot path)",
+              "rank": 1,
+              "rme": 0,
+              "samples": []
+            },
+            {
+              "id": "1735184924_0_1",
+              "name": "GET /users/:id — route param extraction",
+              "rank": 2,
+              "rme": 0,
+              "samples": []
+            },
+            {
+              "id": "1735184924_0_2",
+              "name": "GET /deep/50 — radix tree 100-route lookup",
+              "rank": 3,
+              "rme": 0,
+              "samples": []
+            },
+            {
+              "id": "1735184924_0_3",
+              "name": "GET /mw — 20-hook onRequest pipeline",
+              "rank": 4,
+              "rme": 0,
+              "samples": []
+            },
+            {
+              "id": "1735184924_0_4",
+              "name": "GET /static/file.json — pre-serialized Buffer passthrough",
+              "rank": 5,
+              "rme": 0,
+              "samples": []
+            },
+            {
+              "id": "1735184924_0_5",
+              "name": "POST /bytes — raw binary Buffer round-trip",
+              "rank": 6,
+              "rme": 0,
+              "samples": []
+            },
+            {
+              "id": "1735184924_0_6",
+              "name": "POST /echo — JSON body read + re-serialize",
+              "rank": 7,
+              "rme": 0,
+              "samples": []
+            },
+            {
+              "id": "1735184924_0_7",
+              "name": "POST /form — URL-encoded body parse",
+              "rank": 8,
+              "rme": 0,
+              "samples": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
