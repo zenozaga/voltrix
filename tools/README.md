@@ -154,7 +154,7 @@ The tools automatically ignore:
 📦 Package Overview:
 | @voltrix/express          | 0.1.0   | 42   | 15   | 2.3 MB   | Public |
 | @voltrix/decorator        | 0.1.0   | 28   | 12   | 1.8 MB   | Public |
-| @voltrix/benchs           | 0.1.0   | 15   | 0    | 45.2 MB  | Private|
+| @voltrix/benchmarks       | 0.1.0   | 15   | 0    | 45.2 MB  | Private|
 
 📈 Project Summary:
    Total packages: 3

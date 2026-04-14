@@ -1,191 +1,124 @@
-# 🚀 Voltrix Benchmarks
+# Benchmarks
 
-Performance benchmarks for Voltrix framework showcasing Direct Actions and ultra-fast O(1) routing.
+This package contains the benchmark runners used to compare `@voltrix/server`,
+`@voltrix/express`, `uWebSockets.js`, and plain Node baselines.
 
-## 🚀 Quick Start
+## Requirements
+
+- Node.js `>=20`
+- Workspace dependencies installed
+- Built package outputs for the workers that import `dist/`
+
+Before running the benchmarks, rebuild the workspace or at least the packages
+used by the workers:
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Run comprehensive benchmark
-npm run bench:comprehensive
-
-# Run specific benchmarks  
-npm run bench:simple
-npm run bench:vs-express
-npm run bench:uws
+pnpm build
 ```
 
-## 📊 Available Benchmarks
+If you only care about the server benches:
 
-### Comprehensive Framework Battle
 ```bash
-npm run bench:comprehensive
+pnpm --filter @voltrix/server build
+pnpm --filter @voltrix/express build
 ```
-Tests all major frameworks with realistic scenarios:
-- **Express.js** - Traditional middleware-heavy framework
-- **Fastify** - Performance-optimized with JSON schemas  
-- **Koa.js** - Modern async/await with context objects
-- **Hapi.js** - Configuration-centric with built-in validation
-- **μWebSockets.js** - Ultra-fast C++ backend
-- **Voltrix** - Our Express-compatible high-performance framework
 
-### Individual Performance Tests
+## Scripts
+
+From the repo root:
+
 ```bash
-npm run bench:simple      # Basic routing performance
-npm run bench:routing     # Route matching performance  
-npm run bench:realistic   # Realistic application scenarios
-npm run bench:vs-express  # Direct Voltrix vs Express comparison
-npm run bench:uws         # μWebSockets.js performance baseline
+pnpm bench
+pnpm bench:vitest
+pnpm bench:server
 ```
 
-### Decorator Benchmarks
+From the `benchmarks/` directory:
+
 ```bash
-npm run bench:decorators  # Real decorator implementation tests
-npm run bench:metadata    # Metadata performance analysis
+pnpm bench
+pnpm bench:vitest
+pnpm bench:server
 ```
 
-## 🏗️ Framework Helpers
+What each script does:
 
-The `benchmarks/helpers/` directory contains standardized server creation helpers for fair performance comparisons:
+- `bench`: runs the end-to-end `autocannon` comparison in [bench/run.mjs](./bench/run.mjs)
+- `bench:vitest`: runs all Vitest benchmark files with [vitest.config.ts](./vitest.config.ts)
+- `bench:server`: runs only [voltrix-server.bench.ts](./bench/voltrix-server.bench.ts)
 
-- `express.js` - Express.js server with middleware
-- `fastify.js` - Fastify server with schemas and hooks
-- `koa.js` - Koa.js server with async middleware
-- `hapi.js` - Hapi.js server with validation
-- `uws.js` - μWebSockets.js server with manual routing
-- `voltrix.js` - Voltrix server with Express-like API
+## Current Suites
 
-Each helper creates servers with:
-- Consistent middleware (CORS, JSON parsing, request tracking)
-- Identical route structures (static, dynamic, nested)
-- Performance monitoring headers
-- Proper error handling
+### Autocannon runner
 
-## 📈 Benchmark Scenarios
+[run.mjs](./bench/run.mjs) starts isolated workers and compares:
 
-### Test Routes
-1. **Root endpoint** (`/`) - Basic response
-2. **Health check** (`/health`) - System information
-3. **Static routes** (`/api/v1/users/5`) - Simple routing
-4. **Dynamic routes** (`/api/v1/users/5/:id`) - Parameter extraction  
-5. **Nested routes** (`/api/v1/users/5/posts/:id/comments`) - Complex routing
+- Pure Node.js single-core
+- uWebSockets.js single-core
+- Voltrix single-core
+- `@voltrix/server` single-core
+- Pure Node.js cluster
+- uWebSockets.js multi-thread
+- `@voltrix/server` multi-thread
 
-### Metrics Collected
-- **Requests per second (RPS)** - Primary throughput metric
-- **Latency percentiles** (p50, p90, p95, p99) - Response times
-- **Memory usage** - RAM consumption during tests
-- **CPU utilization** - Processing overhead
-- **Error rates** - Failure percentages
+The scenarios currently exercised are:
 
-## 🔧 Configuration
+- `GET /`
+- `GET /ping`
+- `GET /users/:id`
+- `GET /deep/99`
+- `GET /mw`
+- `GET /static/file.json`
+- `POST /echo`
+- `POST /form`
 
-### Test Parameters
-```javascript
-const testConfig = {
-  routes: 25,              // Routes per framework
-  middleware: ['cors', 'logger'], // Active middleware
-  warmupRequests: 1000,    // Warmup iterations
-  benchmarkRequests: 50000, // Benchmark iterations  
-  concurrency: 100,        // Concurrent connections
-  duration: 30             // Test duration (seconds)
-};
+### Vitest benches
+
+The package currently ships these benchmark files:
+
+- [pure.bench.ts](./bench/pure.bench.ts)
+- [uws.bench.ts](./bench/uws.bench.ts)
+- [voltrix.bench.ts](./bench/voltrix.bench.ts)
+- [voltrix-server.bench.ts](./bench/voltrix-server.bench.ts)
+
+There are also ad-hoc runners for focused experiments:
+
+- [form.bench.mjs](./bench/form.bench.mjs)
+- [async-patterns.mjs](./bench/async-patterns.mjs)
+
+## Notes
+
+- The worker files import `packages/*/dist`, not `src`. If you benchmark stale
+  builds, you benchmark stale code.
+- The `autocannon` runner is localhost-on-localhost. For multi-core scale-up
+  analysis, the client can become the bottleneck before the server does.
+- If you are validating scale-up, increase concurrency and prefer a stronger
+  external load generator instead of relying on a single local client process.
+
+## Windows `sb`
+
+If you want to validate a single server outside the built-in runner with
+SuperBenchmarker in Windows, first start the desired worker in one terminal:
+
+Single-core:
+
+```powershell
+cd D:\zenozaga\Github\accounts\zenozaga\projects\@zenofolio\voltrix\benchmarks
+$env:BENCH_PORT=4004
+node .\bench\workers\voltrix-server.worker.mjs
 ```
 
-### Adding New Frameworks
+Multi-core:
 
-1. Create helper in `benchmarks/helpers/new-framework.js`:
-```javascript
-export function createNewFrameworkServer(config) {
-  return {
-    app: frameworkApp,
-    start: async (port) => ({ 
-      server, 
-      close: () => server.close(),
-      getStats: () => ({ requestCount, routes, middleware })
-    })
-  };
-}
+```powershell
+cd D:\zenozaga\Github\accounts\zenozaga\projects\@zenofolio\voltrix\benchmarks
+$env:BENCH_PORT=4013
+node .\bench\workers\voltrix-server.mt.worker.mjs
 ```
 
-2. Add to benchmark suite in `comprehensive-battle.js`
-3. Update dependencies in `package.json`
+Then run `sb` from another Windows terminal:
 
-## 📋 Requirements
-
-- **Node.js** ≥ 18.0.0
-- **pnpm** (workspace support)
-- **autocannon** - HTTP benchmarking tool
-  ```bash
-  npm install -g autocannon
-  ```
-
-## 📊 Results Interpretation
-
-### Performance Rankings
-Results are ranked by average requests per second across all test scenarios.
-
-**Expected Performance Order:**
-1. 🥇 **μWebSockets.js** - C++ backend, minimal overhead
-2. 🥈 **Voltrix** - Optimized Express-like API on μWebSockets.js
-3. 🥉 **Fastify** - Schema validation, optimized serialization
-4. **Koa.js** - Modern async/await, lightweight
-5. **Express.js** - Feature-rich, mature ecosystem
-6. **Hapi.js** - Configuration-heavy, enterprise features
-
-### Key Metrics
-- **RPS > 50,000** = Excellent performance
-- **RPS 20,000-50,000** = Good performance  
-- **RPS 10,000-20,000** = Adequate performance
-- **Latency < 5ms** = Excellent responsiveness
-- **Memory < 100MB** = Efficient resource usage
-
-## 🎯 Voltrix Performance Goals
-
-- **Primary Goal**: Outperform Express.js by 300-500%
-- **Secondary Goal**: Achieve 70-80% of μWebSockets.js raw performance
-- **Compatibility Goal**: Maintain Express.js API compatibility
-- **Memory Goal**: Use <50% more memory than μWebSockets.js
-- **Latency Goal**: Stay within 2x of μWebSockets.js latency
-
-## 📝 Benchmark Reports
-
-Results are automatically formatted with:
-- Performance rankings with medals (🥇🥈🥉)
-- Detailed scenario breakdowns
-- Memory and CPU usage statistics
-- Error rate analysis
-- Recommendations for optimization
-
-## 🔍 Troubleshooting
-
-### Common Issues
-1. **Port conflicts** - Each framework uses different ports (3001-3006)
-2. **Missing autocannon** - Install globally: `npm install -g autocannon`
-3. **Memory limits** - Reduce concurrent connections for low-memory systems
-4. **Timeout errors** - Increase test duration for slower systems
-
-### Debug Mode
-Set environment variables for detailed logging:
-```bash
-DEBUG=voltrix:* npm run bench:comprehensive
-NODE_DEBUG=perf_hooks npm run bench:simple
+```powershell
+sb -u http://127.0.0.1:4004/ping -c 256 -N 15 -W 0 -P 1 -B
+sb -u http://127.0.0.1:4013/ping -c 256 -N 15 -W 0 -P 1 -B
 ```
-
-## 📚 Documentation
-
-- [HELPERS_GUIDE.md](./HELPERS_GUIDE.md) - Detailed helper usage guide
-- [Performance Analysis](./docs/performance-analysis.md) - In-depth results
-- [Optimization Tips](./docs/optimization.md) - Framework tuning guide
-
-## 🤝 Contributing
-
-1. Add new benchmark scenarios in `benchmarks/`
-2. Create framework helpers with consistent APIs
-3. Update documentation and configuration
-4. Test with `npm run bench:all`
-
-## 📄 License
-
-MIT - See LICENSE file for details
