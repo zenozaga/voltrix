@@ -1,4 +1,4 @@
-import { MetadataRegistry, type MetadataBag } from '.\./__internal/metadata-registry.js';
+import { MetadataRegistry, type MetadataBag } from '../__internal/metadata-registry.js';
 import { DIContainer } from '@voltrix/injector';
 import { Voltrix } from '@voltrix/express';
 import {
@@ -9,7 +9,7 @@ import {
   IRequest,
   IResponse
 } from '@voltrix/core';
-import { DiscoveryCollector, type ProcessorContext } from '.\/discovery.collector.js';
+import { DiscoveryCollector, type ProcessorContext } from './discovery.collector.js';
 
 
 export interface VoltrixApplication {

@@ -37,3 +37,71 @@ server.post('/echo', async (ctx) => {
 await server.listen({ port: 3000 });
 console.log('Listening on http://localhost:3000');
 ```
+
+## Características Avanzadas
+
+### 1. Metadata (`.meta`)
+Puedes añadir datos personalizados a cualquier ruta (muy útil para generar OpenAPI, controlar permisos o documentar).
+
+```typescript
+server.get('/users/:id', (ctx) => {
+  ctx.json({ id: ctx.params.id });
+}).meta('openapi', {
+  summary: 'Obtener usuario por ID',
+  tags: ['Users']
+});
+
+// Más tarde, puedes extraer todas las rutas con metadata 'openapi':
+const docs = server.routes().byMeta('openapi');
+```
+
+### 2. Plugins y Middlewares (`onRequest`)
+Voltrix usa un sistema de hooks súper ligero en lugar del clásico stack asíncrono de middlewares para mantener las allocations a cero. Puedes agrupar lógica usando `server.plugin()`.
+
+```typescript
+// Un plugin para autenticación
+server.plugin(async (instance) => {
+  // Pre-alocar espacio en el contexto prototipo (O(1), zero-allocation)
+  instance.decorateCtx('user', null);
+
+  // Hook global que se ejecuta antes del handler
+  instance.onRequest((ctx) => {
+    const auth = ctx.header('authorization');
+    if (!auth) {
+      ctx.status(401).json({ error: 'Missing token' });
+      return; // Corta la ejecución si no hay token
+    }
+    // ctx.user ya está definido en el prototipo, reasignarlo es ultra rápido
+    ctx.user = { id: 1, role: 'admin' }; 
+  });
+});
+```
+
+### 3. Validación de Payload (Validator)
+Puedes leer y validar el body de forma síncrona o asíncrona usando librerías como Zod integradas directamente en tu handler o a través de un wrapper.
+
+```typescript
+import { z } from 'zod';
+
+const UserSchema = z.object({
+  name: z.string().min(3),
+  age: z.number().int()
+});
+
+server.post('/users', async (ctx) => {
+  try {
+    const rawBody = await ctx.readJson();
+    
+    // Validación de Zod
+    const validData = UserSchema.parse(rawBody);
+    
+    ctx.status(201).json({ success: true, data: validData });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      ctx.status(400).json({ error: 'Validation failed', issues: error.issues });
+    } else {
+      ctx.status(500).json({ error: 'Internal error' });
+    }
+  }
+});
+```
