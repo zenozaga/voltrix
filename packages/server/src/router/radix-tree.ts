@@ -67,20 +67,55 @@ export class RadixTree {
    * @param url    - Raw URL path (no query string).
    */
   match(method: HttpMethod, url: string): RouteMatch | null {
-    const root = this.roots.get(method);
-    if (!root) return null;
-
     const segments = splitUrl(url);
     const paramValues: string[] = [];
-    const route = matchSegments(root, segments, 0, paramValues);
-    if (!route) return null;
 
-    return { route, paramValues };
+    // 1. Try specific method tree
+    const root = this.roots.get(method);
+    if (root) {
+      const route = matchSegments(root, segments, 0, paramValues);
+      if (route) return { route, paramValues };
+    }
+
+    // 2. Try 'ANY' tree
+    const anyRoot = this.roots.get('ANY');
+    if (anyRoot) {
+      paramValues.length = 0; // reset params for retry
+      const route = matchSegments(anyRoot, segments, 0, paramValues);
+      if (route) return { route, paramValues };
+    }
+
+    return null;
   }
 
   /** Returns the set of registered HTTP methods. */
   methods(): string[] {
     return Array.from(this.roots.keys());
+  }
+
+  debug(): void {
+    for (const [method, root] of this.roots) {
+      console.log(`  [${method}]`);
+      this._debugNode(root, '');
+    }
+  }
+
+  private _debugNode(node: RadixNode, indent: string): void {
+    if (node.handlers.has('ROUTE')) {
+      console.log(`${indent}  (HANDLER)`);
+    }
+    for (const [seg, child] of node.staticChildren) {
+      console.log(`${indent}  /${seg}`);
+      this._debugNode(child, indent + '  ');
+    }
+    if (node.paramChild) {
+      console.log(`${indent}  /:param`);
+      this._debugNode(node.paramChild, indent + '  ');
+    }
+    if (node.wildcardChild) {
+      console.log(`${indent}  /*`);
+      this._debugNode(node.wildcardChild, indent + '  ');
+    }
   }
 }
 

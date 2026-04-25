@@ -6,14 +6,15 @@ Ultra-fast Node.js HTTP framework built on [uWebSockets.js](https://github.com/u
 
 Single-core · 100 concurrent connections · autocannon · loopback:
 
-| Scenario | Pure Node | uWS raw | Voltrix | **@voltrix/server** |
+| Scenario | Pure Node | uWS raw | Voltrix (Express) | **@voltrix/server** |
 |---|---|---|---|---|
-| GET / | 80.6k | 80.1k | 84.1k | **85.3k** req/s |
-| GET /users/:id — param | 80.1k | 86.3k | 90.8k | **91.8k** req/s |
-| GET /deep/99 — 100 routes | 79.0k | 83.8k | 87.8k | **90.9k** req/s |
-| GET /mw — 20 middlewares | 82.3k | 80.0k | 86.9k | **88.7k** req/s |
-| POST /echo — JSON body | 68.5k | 88.0k | 94.6k | **92.1k** req/s |
-| POST /form — URL-encoded | 59.5k | 93.5k | 92.0k | **85.4k** req/s |
+| GET / | 82.2k | 77.0k | 85.0k | **86.5k** req/s |
+| GET /ping — JSON | 76.3k | 76.0k | 86.3k | **87.1k** req/s |
+| GET /users/:id — param | 73.9k | 81.2k | 86.7k | **87.0k** req/s |
+| GET /deep/99 — 100 routes | 74.4k | 75.2k | 77.6k | **82.0k** req/s |
+| GET /mw — 20 middlewares | 48.8k | 66.4k | 81.1k | **77.0k** req/s |
+| POST /echo — JSON body | 63.2k | 87.5k | 65.9k | **84.2k** req/s |
+| POST /form — URL-encoded | 44.6k | 80.2k | 90.2k | **88.3k** req/s |
 
 Multi-core · 24 threads · SO_REUSEPORT · loopback:
 

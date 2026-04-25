@@ -69,6 +69,7 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
   private _resHeaders: string[] = [];
   /** Lowercase names aligned with `_resHeaders` pairs. */
   private _resHeaderNames: string[] = [];
+  private _abortHooks: Array<() => void> = [];
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -78,6 +79,9 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
 
   private readonly _onAbortedBound = (): void => {
     this._aborted = true;
+    for (let i = 0; i < this._abortHooks.length; i++) {
+      this._abortHooks[i]();
+    }
   };
 
   /**
@@ -87,12 +91,18 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    * uWS constraint: `req` is only valid synchronously. All req data must be
    * captured here, before any await boundary.
    */
-  initialize(res: HttpResponse, req: HttpRequest, paramNames: string[], method: string, url: string): void {
+  initialize(res: HttpResponse, req: HttpRequest, paramNames: string[], method: string, url: string, manualParams?: string[]): void {
     this._res         = res;
     this._method      = method;
     this._url         = url;
 
-    if (paramNames.length === 0) {
+    if (manualParams) {
+      const params: Record<string, string> = {};
+      for (let i = 0; i < paramNames.length; i++) {
+        params[paramNames[i]] = manualParams[i] ?? '';
+      }
+      this._params = params as P;
+    } else if (paramNames.length === 0) {
       this._params = EMPTY_PARAMS as P;
     } else {
       const params: Record<string, string> = {};
@@ -119,6 +129,7 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
     this._bodyJson    = undefined;
     this._bodyLoaded  = false;
     this._locals = null;
+    this._abortHooks.length = 0;
 
     res.onAborted(this._onAbortedBound);
   }
@@ -147,6 +158,15 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
 
   /** HTTP method in UPPERCASE (GET, POST, …). */
   get method(): string { return this._method; }
+
+  /** HTTP status code. */
+  get statusCode(): number { return this._statusCode; }
+
+  /**
+   * The raw uWebSockets.js HttpResponse object.
+   * Use with caution — many uWS methods are invalid after an await boundary.
+   */
+  get rawRes(): HttpResponse { return this._res; }
 
   /** Request URL path (without query string). */
   get url(): string { return this._url; }
@@ -295,6 +315,18 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
     names.push(lower);
     this._resHeaders.push(name, value);
     return this;
+  }
+
+  /**
+   * Register a hook to be called if the request is aborted by uWS.
+   * Useful for cleaning up resources like file descriptors or streams.
+   */
+  onAbort(hook: () => void): void {
+    if (this._aborted) {
+      hook();
+      return;
+    }
+    this._abortHooks.push(hook);
   }
 
   /**

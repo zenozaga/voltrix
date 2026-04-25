@@ -1,12 +1,14 @@
-import type { HttpResponse } from 'uWebSockets.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { IResponse } from '../types/http.js';
+import type { Ctx } from '@voltrix/server';
+import { Renderer } from '../renderer.js';
 
 const MIME_TYPES: Record<string, string> = {
-  '.html': 'text/html',
-  '.js': 'text/javascript',
-  '.css': 'text/css',
-  '.json': 'application/json',
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.gif': 'image/gif',
@@ -19,297 +21,146 @@ const MIME_TYPES: Record<string, string> = {
   '.otf': 'application/font-otf',
   '.wasm': 'application/wasm',
 };
-import type { IResponse } from '../types/http.js';
-import { Renderer } from '../renderer.js';
-import { STATUS_TEXT, StatusCode, STATUS_LINES } from '../common/constants.js';
-import { normalizeBodyForUWS, BodyInput } from '../common/normalize-data.js';
 
 export class Response implements IResponse {
-  public _headers: Record<string, string> = {};
-  public _headerNames: string[] = [];
-  private _headerLowerMap: Map<string, string> = new Map(); // lowercase → original casing
   public locals: Record<string, any> = {};
-  private _statusCode = 200;
-  private _sent = false;
 
-  isAborted = false;
-  onFinished?: () => void;
-
-  constructor() {
-    // Initial state set by initialize()
+  constructor(
+    private readonly _ctx: Ctx,
+    private readonly _renderer: Renderer
+  ) {
+    this.locals = _ctx.locals;
   }
 
-  /**
-   * Reset instance for reuse in ObjectPool
-   */
-  initialize(raw: HttpResponse, renderer: Renderer, onFinished?: () => void): void {
-    this.raw = raw;
-    this.renderer = renderer;
-    this._headers = {};
-    this._headerNames = [];
-    this._headerLowerMap = new Map();
-    this._statusCode = 200;
-    this._sent = false;
-    this.isAborted = false;
-    this.onFinished = onFinished;
-    this.locals = {};
-
-    this.raw.onAborted(() => {
-      this.isAborted = true;
-      if (this.onFinished) {
-        this.onFinished();
-        this.onFinished = undefined;
-      }
-    });
-  }
-
-  private finished(): void {
-    if (this.onFinished) {
-      this.onFinished();
-      this.onFinished = undefined;
-    }
-  }
-
-  private raw!: HttpResponse;
-  private renderer!: Renderer;
-
-  // ============================================
-  // BASIC PROPERTIES
-  // ============================================
   get headersSent(): boolean {
-    return this._sent;
+    return this._ctx.sent;
   }
 
-  // ============================================
-  // STATUS
-  // ============================================
+  get isAborted(): boolean {
+    return this._ctx.aborted;
+  }
+
   status(code: number): this {
-    this._statusCode = code;
+    this._ctx.status(code);
     return this;
   }
 
-  // ============================================
-  // HEADERS
-  // ============================================
   header(name: string, value: string): this;
   header(name: string): string | undefined;
-
   header(name: string, value?: string): this | string | undefined {
     if (value !== undefined) {
-      const lower = name.toLowerCase();
-      if (!this._headerLowerMap.has(lower)) {
-        this._headerLowerMap.set(lower, name);
-        this._headerNames.push(name);
-      }
-      this._headers[name] = value;
+      this._ctx.setHeader(name, value);
       return this;
     }
-    return this._headers[name];
+    return undefined;
   }
 
   headers(): Record<string, string> {
-    return this._headers;
+    return this._ctx.headers();
   }
 
   type(contentType: string): this {
-    return this.setHeader('Content-Type', contentType);
-  }
-
-  setHeader(name: string, value: string): this {
-    const lower = name.toLowerCase();
-    const existing = this._headerLowerMap.get(lower);
-    if (existing !== undefined) {
-      this._headers[existing] = value;
-    } else {
-      this._headerLowerMap.set(lower, name);
-      this._headerNames.push(name);
-      this._headers[name] = value;
-    }
+    this._ctx.setHeader('Content-Type', contentType);
     return this;
   }
 
-  // ============================================
-  // JSON
-  // ============================================
+  setHeader(name: string, value: string): this {
+    this._ctx.setHeader(name, value);
+    return this;
+  }
+
   json(data: any): void {
-    if (this._sent || this.isAborted) return;
-
-    const body = JSON.stringify(data);
-    this.setHeader('Content-Type', 'application/json; charset=utf-8');
-
-    this._sendInternal(body);
+    this._ctx.json(data);
   }
 
-  // ============================================
-  // SEND BUFFER (delegates to _sendInternal)
-  // ============================================
-  sendBuffer(data: BodyInput): void {
-    if (this._sent || this.isAborted) return;
-
-    const normalized = normalizeBodyForUWS(data);
-
-    this.setHeader('Content-Type', 'application/octet-stream');
-    this._sendInternal(normalized);
+  sendBuffer(data: any): void {
+    this._ctx.send(data);
   }
 
-  // ============================================
-  // SEND (string or Buffer)
-  // ============================================
   send(data: string | Buffer): void {
-    if (this._sent || this.isAborted) return;
-
-    this._sendInternal(data);
+    this._ctx.send(data);
   }
 
-  // ============================================
-  // INTERNAL SEND — all data passes through here
-  // ============================================
-  private _sendInternal(body: BodyInput): void {
-    if (this._sent || this.isAborted) return;
-    this._sent = true;
-
-    const payload = normalizeBodyForUWS(body);
-    const statusLine = STATUS_LINES[this._statusCode] || `${this._statusCode} ${STATUS_TEXT[this._statusCode as StatusCode] || 'Unknown'}`;
-
-    // Note: do NOT use cork() + end(payload) together — uWS v20.60 adds
-    // Content-Length twice in that combination (once in end(), once on cork flush).
-    // Writing headers directly and calling end(payload) produces a single CL header.
-    this.raw.writeStatus(statusLine);
-
-    if (!this.header('Content-Type')) {
-      this.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  end(data?: string | Uint8Array): void {
+    if (data !== undefined) {
+      this._ctx.send(data);
+    } else {
+      this._ctx.end();
     }
-
-    const names = this._headerNames;
-    const headers = this._headers;
-    for (let i = 0; i < names.length; i++) {
-      this.raw.writeHeader(names[i], headers[names[i]]);
-    }
-
-    this.raw.end(payload);
-    this.finished();
   }
 
-  // ============================================
-  // END
-  // ============================================
-  end(data: string | Uint8Array = ''): void {
-    if (this._sent || this.isAborted) return;
-    
-    const payload = normalizeBodyForUWS(data);
-    this._sendInternal(payload);
-  }
-
-  // ============================================
-  // REDIRECT
-  // ============================================
   redirect(url: string, status = 302): void {
-    if (this._sent || this.isAborted) return;
-
-    this.status(status);
-    this.header('Location', url);
-    this.header('Content-Length', '0');
-
-    this._sendInternal('');
+    this._ctx.redirect(url, status);
   }
 
-  // ============================================
-  // RENDER (HTML)
-  // ============================================
   async render(view: string, options: Record<string, any> = {}, skipLayout = false): Promise<void> {
-    if (this.isAborted || this._sent) return;
-
-    if (!this.renderer) {
-      this.status(500).send('Renderer not available');
-      return;
-    }
+    if (this.isAborted || this._ctx.sent) return;
 
     try {
-      const html = await this.renderer.viewRenderFile(view, options, skipLayout);
-      if (this.isAborted || this._sent) return;
+      const html = await this._renderer.viewRenderFile(view, options, skipLayout);
+      if (this.isAborted || this._ctx.sent) return;
 
       const len = Buffer.byteLength(html);
 
-      this.raw.cork(() => {
-        this.raw.writeStatus('200 OK');
-        this.raw.writeHeader('Content-Type', 'text/html; charset=utf-8');
-        this.raw.writeHeader('Content-Length', len.toString());
-        this.raw.end(html);
-        this.finished();
+      this._ctx.rawRes.cork(() => {
+        this._ctx.rawRes.writeStatus('200 OK');
+        this._ctx.rawRes.writeHeader('Content-Type', 'text/html; charset=utf-8');
+        this._ctx.rawRes.writeHeader('Content-Length', len.toString());
+        this._ctx.rawRes.end(html);
       });
     } catch (err: any) {
-      const onError = this.renderer.viewGet('onError');
-
+      const onError = this._renderer.viewGet('onError');
       let output: string;
-
       try {
         output = onError
-          ? await onError(err, view, options)
-          : `Render error: ${err?.message ?? 'Unknown error'}`;
-      } catch {
-        output = `Render error: ${err?.message ?? 'Unknown error'}`;
+          ? await onError(err instanceof Error ? err : new Error(String(err)), view, options)
+          : `Render error: ${err instanceof Error ? err.message : String(err)}`;
+      } catch (err: any) {
+        output = `Render error: ${err instanceof Error ? err.message : String(err)}`;
       }
 
-      if (!this._sent && !this.isAborted) {
-        this.raw.cork(() => {
-          this.raw.writeStatus('500 Internal Server Error');
-          this.raw.writeHeader('Content-Type', 'text/html; charset=utf-8');
-          this.raw.end(output);
-          this.finished();
+      if (!this._ctx.sent && !this.isAborted) {
+        this._ctx.rawRes.cork(() => {
+          this._ctx.rawRes.writeStatus('500 Internal Server Error');
+          this._ctx.rawRes.writeHeader('Content-Type', 'text/html; charset=utf-8');
+          this._ctx.rawRes.end(output);
         });
       }
     }
   }
 
-  // ============================================
-  // SEND FILE (optimized with backpressure)
-  // ============================================
   async sendFile(filePath: string): Promise<void> {
-    if (this._sent || this.isAborted) return;
-    this._sent = true;
+    if (this._ctx.sent || this.isAborted) return;
 
     return new Promise((resolve, reject) => {
       fs.stat(filePath, (err, stats) => {
         if (err || !stats.isFile()) {
-            this._sent = false; // Reset sent to allow error handling
             return reject(err || new Error('Not a file'));
         }
 
         const size = stats.size;
         const contentType = this.getContentType(filePath);
-        
-        this.raw.cork(() => {
-          this.raw.writeStatus(STATUS_LINES[200]);
-          
-          // Clear any conflicting headers set before
-          this.setHeader('Content-Type', contentType);
+        const raw = this._ctx.rawRes;
 
-          const names = this._headerNames;
-          const headers = this._headers;
-          for (let i = 0; i < names.length; i++) {
-            const name = names[i];
-            if (name.toLowerCase() === 'content-length') continue;
-            this.raw.writeHeader(name, headers[name]);
-          }
+        raw.cork(() => {
+          raw.writeStatus('200 OK');
+          this._ctx.setHeader('Content-Type', contentType);
         });
 
-        // Setup streaming
         const fd = fs.openSync(filePath, 'r');
         let offset = 0;
-        const buffer = Buffer.alloc(64 * 1024); // 64KB chunks
+        const buffer = Buffer.alloc(64 * 1024);
 
         const streamChunk = () => {
-          if (this.isAborted) {
-            fs.closeSync(fd);
-            this.finished();
+          if (this.isAborted || this._ctx.sent) {
+            try { fs.closeSync(fd); } catch {}
             return;
           }
 
           const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, offset);
           if (bytesRead === 0) {
-            fs.closeSync(fd);
-            this.raw.end();
-            this.finished();
+            try { fs.closeSync(fd); } catch {}
+            raw.end();
             resolve();
             return;
           }
@@ -318,29 +169,26 @@ export class Response implements IResponse {
           const isLast = offset + bytesRead >= size;
           
           let ok = false;
-          this.raw.cork(() => {
+          raw.cork(() => {
             if (isLast) {
-              this.raw.end(chunk);
+              raw.end(chunk);
               ok = true;
             } else {
-              ok = this.raw.tryEnd(chunk, size)[0];
+              ok = raw.tryEnd(chunk, size)[0];
             }
           });
 
           if (isLast) {
-            fs.closeSync(fd);
-            this.finished();
+            try { fs.closeSync(fd); } catch {}
             resolve();
             return;
           }
 
           if (ok) {
             offset += bytesRead;
-            // Immediate next chunk if it fits in buffer
             process.nextTick(streamChunk);
           } else {
-            // Wait for writability
-            this.raw.onWritable((newOffset) => {
+            raw.onWritable((newOffset: number) => {
               offset = newOffset;
               streamChunk();
               return true;
@@ -348,16 +196,8 @@ export class Response implements IResponse {
           }
         };
 
-        this.raw.onAborted(() => {
-          this.isAborted = true;
-          if (fd !== undefined) {
-            try {
-              fs.closeSync(fd);
-            } catch (e) {
-              // Ignore already closed or invalid fd
-            }
-          }
-          this.finished();
+        this._ctx.onAbort(() => {
+          try { fs.closeSync(fd); } catch {}
           reject(new Error('Aborted'));
         });
 
@@ -371,16 +211,7 @@ export class Response implements IResponse {
     return MIME_TYPES[ext] ?? 'application/octet-stream';
   }
 
-  // ============================================
-  // CLOSE
-  // ============================================
   close(): void {
-    if (!this._sent && !this.isAborted) {
-      this._sent = true;
-      this.raw.cork(() => {
-        this.raw.end();
-        this.finished();
-      });
-    }
+    this._ctx.end();
   }
 }

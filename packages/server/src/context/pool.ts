@@ -51,9 +51,10 @@ export class CtxPool {
     paramNames: string[],
     method: string,
     url: string,
+    manualParams?: string[],
   ): Ctx<P> {
     const ctx = (this.pool.pop() ?? new Ctx()) as Ctx<P>;
-    ctx.initialize(res, req, paramNames, method, url);
+    ctx.initialize(res, req, paramNames, method, url, manualParams);
     // Reset plugin-decorated properties so pooled instances don't bleed state
     const resets = this._decoratedResets;
     for (let i = 0; i < resets.length; i++) {

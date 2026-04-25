@@ -1,9 +1,10 @@
 import uWS from 'uWebSockets.js';
 import { CtxPool } from './context/pool.js';
 import { Ctx } from './context/context.js';
-import { RouteRegistry } from './router/route-registry.js';
+import { RouteRegistry, type RouteTreeEntry } from './router/route-registry.js';
 import { Router } from './router/router.js';
 import { RouteBuilder } from './router/route-builder.js';
+import { RadixTree } from './router/radix-tree.js';
 import { PluginManager } from './plugins/plugin-manager.js';
 import { emptyHookSet } from './hooks/hook-types.js';
 import { compileInlinePipeline } from './hooks/pipeline-runner.js';
@@ -11,6 +12,7 @@ import { mergeHooks } from './hooks/hook-manager.js';
 import { defaultSerializerCompiler } from './serializers/default.js';
 import { isHttpError } from './errors/http-error.js';
 import { CONTENT_TYPES } from './common/constants.js';
+
 import type { RouteHandler, CompiledRoute } from './router/route-definition.js';
 import type { HookSet, OnRequestHook, PreHandlerHook, OnResponseHook, OnErrorHook } from './hooks/hook-types.js';
 import type { InlinePipeline } from './hooks/pipeline-runner.js';
@@ -18,7 +20,6 @@ import type { SerializerCompiler } from './serializers/types.js';
 import type { ValidatorCompiler } from './validators/types.js';
 import type { VoltrixPlugin } from './plugins/plugin-types.js';
 import type { HttpMethod } from './common/constants.js';
-import type { RouteTreeEntry } from './router/route-registry.js';
 
 interface RuntimeRoute extends Omit<CompiledRoute, 'onRequest' | 'preHandler' | 'onResponse'> {
   onRequest: InlinePipeline;
@@ -63,6 +64,7 @@ export class VoltrixServer {
   private readonly _app: uWS.TemplatedApp;
   private readonly _pool: CtxPool;
   private readonly _registry: RouteRegistry;
+  private readonly _radix: RadixTree;
   private readonly _globalHooks: HookSet;
   private readonly _builders: RouteBuilder[] = [];
   private readonly _pluginManager: PluginManager;
@@ -71,6 +73,7 @@ export class VoltrixServer {
 
   private _listenSocket: uWS.us_listen_socket | null = null;
   private _notFoundHandler: RouteHandler | null = null;
+  private _virtual404Route: RuntimeRoute | null = null;
 
   constructor(opts: VoltrixServerOptions = {}) {
     this._app      = opts.uwsOptions
@@ -79,6 +82,7 @@ export class VoltrixServer {
 
     this._pool     = new CtxPool(opts.poolSize ?? 64);
     this._registry = new RouteRegistry();
+    this._radix    = new RadixTree();
     this._globalHooks   = emptyHookSet();
     this._serializerRef = { value: defaultSerializerCompiler };
     this._validatorRef  = { value: undefined };
@@ -159,6 +163,10 @@ export class VoltrixServer {
     return this._addRoute('DELETE', pattern, handler);
   }
 
+  any(pattern: string, handler: RouteHandler): RouteBuilder {
+    return this._addRoute('ANY', pattern, handler);
+  }
+
   head(pattern: string, handler: RouteHandler): RouteBuilder {
     return this._addRoute('HEAD', pattern, handler);
   }
@@ -232,7 +240,32 @@ export class VoltrixServer {
   private _addRoute(method: HttpMethod, pattern: string, handler: RouteHandler): RouteBuilder {
     const builder = new RouteBuilder(method, pattern, handler);
     this._builders.push(builder);
+
+    // If already listening, compile to registry and radix immediately for fallback
+    if (this._listenSocket) {
+      const def = builder.build(this._serializerRef.value, this._validatorRef.value);
+      this._registry.add(def);
+      const compiled = this._compileRuntimeRoute(def);
+      this._radix.insert(method, pattern, compiled as any);
+    }
+
     return builder;
+  }
+
+  private _compileRuntimeRoute(def: any): RuntimeRoute {
+    const onRequest  = mergeHooks(this._globalHooks.onRequest,  def.hooks.onRequest);
+    const preHandler = mergeHooks(this._globalHooks.preHandler, def.hooks.preHandler);
+    const onResponse = mergeHooks(this._globalHooks.onResponse, def.hooks.onResponse);
+
+    return {
+      handler:    def.handler,
+      onRequest:  compileInlinePipeline(onRequest),
+      preHandler: compileInlinePipeline(preHandler),
+      onResponse: compileInlinePipeline(onResponse),
+      serializer: def.serializer,
+      validators: def.validators,
+      paramNames: def.paramNames,
+    };
   }
 
   /**
@@ -240,67 +273,74 @@ export class VoltrixServer {
    * Called once at `listen()` time — never on hot path.
    */
   private _compileRoutes(): void {
-    // Catch-all for any unregistered route — must be registered BEFORE route handlers
-    // so that uWS evaluates specific patterns first (uWS matches in registration order).
-    // We register it last so specific routes take priority.
     for (const builder of this._builders) {
       const def = builder.build(this._serializerRef.value, this._validatorRef.value);
       this._registry.add(def);
+      const compiled = this._compileRuntimeRoute(def);
+      this._radix.insert(def.method, def.pattern, compiled as any);
 
-      // Merge global hooks with route-local hooks
-      const onRequest  = mergeHooks(this._globalHooks.onRequest,  def.hooks.onRequest);
-      const preHandler = mergeHooks(this._globalHooks.preHandler, def.hooks.preHandler);
-      const onResponse = mergeHooks(this._globalHooks.onResponse, def.hooks.onResponse);
-
-      // Pre-classify and compile each pipeline
-      const compiled: RuntimeRoute = {
-        handler:    def.handler,
-        onRequest:  compileInlinePipeline(onRequest),
-        preHandler: compileInlinePipeline(preHandler),
-        onResponse: compileInlinePipeline(onResponse),
-        serializer: def.serializer,
-        validators: def.validators,
-        paramNames: def.paramNames,
-      };
-
-      // Register a route-specific handler that already captures the compiled route.
       this._registerUwsRoute(def.method, def.pattern, this._createDispatch(def.method, compiled));
     }
 
-    // Catch-all 404 — registered last so specific patterns take priority
-    if (this._notFoundHandler) {
-      const handler = this._notFoundHandler;
-      this._app.any('/*', async (res, req) => {
-        const url = req.getUrl();
-        const ctx = this._pool.acquire(res, req, [], req.getMethod().toUpperCase(), url);
-        try {
-          await handler(ctx);
+    // Compile Virtual 404 Route
+    this._virtual404Route = this._compileRuntimeRoute({
+      handler: (ctx: Ctx) => {
+        if (this._notFoundHandler) {
+          const r = this._notFoundHandler(ctx);
+          if (isThenable(r)) {
+            return r.then(() => {
+              if (!ctx.sent && !ctx.aborted) ctx.status(404).end();
+            });
+          }
           if (!ctx.sent && !ctx.aborted) ctx.status(404).end();
-        } catch (err) {
-          if (!ctx.sent && !ctx.aborted) await this._sendError(ctx, err);
-        } finally {
-          this._pool.release(ctx);
+        } else {
+          ctx.status(404).json({ statusCode: 404, code: 'NOT_FOUND', message: 'Not Found' });
         }
-      });
-    } else {
-      this._app.any('/*', (res) => {
-        res.writeStatus('404 Not Found');
-        res.writeHeader('Content-Type', CONTENT_TYPES.JSON);
-        res.end('{"statusCode":404,"code":"NOT_FOUND","message":"Not Found"}');
-      });
-    }
+      },
+      hooks: { onRequest: [], preHandler: [], onResponse: [] },
+      serializer: undefined,
+      validators: undefined,
+      paramNames: [],
+    });
+
+    // Dynamic Fallback + 404 Handler
+    this._app.any('/*', (res, req) => {
+      const method = req.getMethod().toUpperCase() as HttpMethod;
+      const url = req.getUrl();
+      
+      let route = this._virtual404Route!;
+      let paramValues: string[] | undefined;
+
+      // Try RadixTree for late-registered routes
+      const match = this._radix.match(method, url);
+      if (match) {
+        route = match.route as unknown as RuntimeRoute;
+        paramValues = match.paramValues;
+      }
+
+      const ctx = this._pool.acquire(
+        res,
+        req,
+        route.paramNames,
+        method,
+        url,
+        paramValues
+      );
+
+      const runner = PIPELINE_RUNNER_POOL.acquire(this, ctx, route);
+      runner.run();
+    });
   }
 
   /**
    * Register a uWS route handler for the given method and pattern.
    * uWS uses its own pattern syntax (`:name` params, `*` wildcard).
    */
-  private _registerUwsRoute(
-    method: HttpMethod,
-    pattern: string,
-    dispatch: (res: uWS.HttpResponse, req: uWS.HttpRequest) => void,
-  ): void {
+  private _registerUwsRoute(method: HttpMethod | 'ANY', pattern: string, dispatch: (res: uWS.HttpResponse, req: uWS.HttpRequest) => void): void {
     const uwsPattern = toUwsPattern(pattern);
+    
+    // Defer '/*' to the internal catch-all fallback to avoid blocking late-registered specific routes
+    if (uwsPattern === '/*') return;
 
     switch (method) {
       case 'GET':     this._app.get(uwsPattern, dispatch);     break;
@@ -317,7 +357,7 @@ export class VoltrixServer {
    * Hot path — called by uWS for every matched request.
    * The route is already known because uWS dispatches by method+pattern.
    */
-  private _createDispatch(method: HttpMethod, route: RuntimeRoute) {
+  private _createDispatch(method: HttpMethod, route: RuntimeRoute, manualParams?: string[]) {
     return (res: uWS.HttpResponse, req: uWS.HttpRequest): void => {
       const url = req.getUrl();
       const ctx = this._pool.acquire(
@@ -326,6 +366,7 @@ export class VoltrixServer {
         route.paramNames,
         method,
         url,
+        manualParams
       );
 
       const runner = PIPELINE_RUNNER_POOL.acquire(this, ctx, route);
@@ -462,6 +503,10 @@ class PipelineRunner {
     if (this.ctx.sent || this.ctx.aborted) {
       this.release();
       return;
+    }
+
+    if (this.ctx.statusCode === 200) {
+      this.ctx.status(isHttpError(err) ? err.statusCode : 500);
     }
 
     (this.server as any)._sendError(this.ctx, err).then(this.release, this.release);
