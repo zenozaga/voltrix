@@ -35,6 +35,8 @@ import { STATUS_LINES, CONTENT_TYPES } from '../common/constants.js';
  * });
  * ```
  */
+const EMPTY_PARAMS = Object.freeze({}) as Record<string, string>;
+
 export class Ctx<P extends Record<string, string> = Record<string, string>> {
   // ─── Internal uWS handle ─────────────────────────────────────────────────
 
@@ -70,6 +72,14 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
+  private readonly _collectHeaderBound = (key: string, val: string): void => {
+    this._reqHeaderPairs.push(key, val);
+  };
+
+  private readonly _onAbortedBound = (): void => {
+    this._aborted = true;
+  };
+
   /**
    * Reset and bind to a new uWS request/response pair.
    * Called by CtxPool before handing the instance to a handler.
@@ -77,18 +87,26 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    * uWS constraint: `req` is only valid synchronously. All req data must be
    * captured here, before any await boundary.
    */
-  initialize(res: HttpResponse, req: HttpRequest, params: P, method: string, url: string): void {
+  initialize(res: HttpResponse, req: HttpRequest, paramNames: string[], method: string, url: string): void {
     this._res         = res;
     this._method      = method;
     this._url         = url;
-    this._params      = params;
+
+    if (paramNames.length === 0) {
+      this._params = EMPTY_PARAMS as P;
+    } else {
+      const params: Record<string, string> = {};
+      for (let i = 0; i < paramNames.length; i++) {
+        params[paramNames[i]] = decodeURIComponent(req.getParameter(i) ?? '');
+      }
+      this._params = params as P;
+    }
+
     this._queryRaw    = req.getQuery() ?? '';
     this._query       = null;
     this._reqHeaders  = null;
     this._reqHeaderPairs.length = 0;
-    req.forEach((key, val) => {
-      this._reqHeaderPairs.push(key, val);
-    });
+    req.forEach(this._collectHeaderBound);
 
     this._statusCode  = 200;
     this._sent        = false;
@@ -102,7 +120,7 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
     this._bodyLoaded  = false;
     this._locals = null;
 
-    res.onAborted(() => { this._aborted = true; });
+    res.onAborted(this._onAbortedBound);
   }
 
   /**
@@ -165,6 +183,7 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    */
   header(name: string): string | undefined {
     const lower = name.toLowerCase();
+    
     const headers = this._reqHeaders;
     if (headers !== null) return headers[lower];
 
@@ -257,7 +276,14 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    * Setting the same header name twice replaces the previous value.
    */
   setHeader(name: string, value: string): this {
-    const lower = name.toLowerCase();
+    let lower = name;
+    for (let i = 0; i < name.length; i++) {
+      if (name.charCodeAt(i) >= 65 && name.charCodeAt(i) <= 90) {
+        lower = name.toLowerCase();
+        break;
+      }
+    }
+    
     const names = this._resHeaderNames;
     for (let i = 0; i < names.length; i++) {
       if (names[i] === lower) {
@@ -279,7 +305,7 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
   json(data: unknown, serialize?: (v: unknown) => BodyInput): void {
     if (this._sent || this._aborted) return;
     const body = (serialize ?? JSON.stringify)(data) ?? 'null';
-    this.setHeader('Content-Type', CONTENT_TYPES.JSON);
+    this.setHeader('content-type', CONTENT_TYPES.JSON);
     this._flush(body);
   }
 
@@ -289,8 +315,8 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    */
   send(body: BodyInput): void {
     if (this._sent || this._aborted) return;
-    if (!this._hasResHeader('Content-Type')) {
-      this.setHeader('Content-Type', typeof body === 'string' ? CONTENT_TYPES.TEXT : CONTENT_TYPES.BINARY);
+    if (!this._hasResHeader('content-type')) {
+      this.setHeader('content-type', typeof body === 'string' ? CONTENT_TYPES.TEXT : CONTENT_TYPES.BINARY);
     }
     this._flush(body);
   }
@@ -309,7 +335,7 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
   redirect(url: string, code = 302): void {
     if (this._sent || this._aborted) return;
     this._statusCode = code;
-    this.setHeader('Location', url);
+    this.setHeader('location', url);
     this._flush('');
   }
 
@@ -340,7 +366,14 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
   }
 
   private _hasResHeader(name: string): boolean {
-    const lower = name.toLowerCase();
+    let lower = name;
+    for (let i = 0; i < name.length; i++) {
+      if (name.charCodeAt(i) >= 65 && name.charCodeAt(i) <= 90) {
+        lower = name.toLowerCase();
+        break;
+      }
+    }
+    
     const names = this._resHeaderNames;
     for (let i = 0; i < names.length; i++) {
       if (names[i] === lower) return true;

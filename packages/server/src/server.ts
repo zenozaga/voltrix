@@ -26,8 +26,6 @@ interface RuntimeRoute extends Omit<CompiledRoute, 'onRequest' | 'preHandler' | 
   onResponse: InlinePipeline;
 }
 
-const EMPTY_PARAMS = Object.freeze({}) as Record<string, string>;
-
 export interface VoltrixServerOptions {
   /** Initial Ctx pool size. Default: 64. */
   poolSize?: number;
@@ -274,7 +272,7 @@ export class VoltrixServer {
       const handler = this._notFoundHandler;
       this._app.any('/*', async (res, req) => {
         const url = req.getUrl();
-        const ctx = this._pool.acquire(res, req, EMPTY_PARAMS, req.getMethod().toUpperCase(), url);
+        const ctx = this._pool.acquire(res, req, [], req.getMethod().toUpperCase(), url);
         try {
           await handler(ctx);
           if (!ctx.sent && !ctx.aborted) ctx.status(404).end();
@@ -325,110 +323,13 @@ export class VoltrixServer {
       const ctx = this._pool.acquire(
         res,
         req,
-        buildParamsFromReq(req, route.paramNames),
+        route.paramNames,
         method,
         url,
       );
 
-      let released = false;
-      const release = (): void => {
-        if (!released) {
-          released = true;
-          this._pool.release(ctx);
-        }
-      };
-
-      const finishResponse = (): void => {
-        if (ctx.aborted) {
-          release();
-          return;
-        }
-
-        try {
-          const onResponse = route.onResponse(ctx);
-          if (isThenable(onResponse)) {
-            onResponse.then(release, release);
-            return;
-          }
-        } catch {
-          // The response is already on the wire at this point; just release the ctx.
-        }
-
-        release();
-      };
-
-      const handleError = (err: unknown): void => {
-        if (ctx.sent || ctx.aborted) {
-          release();
-          return;
-        }
-
-        this._sendError(ctx, err).then(release, release);
-      };
-
-      const afterHandler = (result: unknown): void => {
-        if (!ctx.sent && !ctx.aborted && result !== undefined) {
-          ctx.json(result, route.serializer?.serialize);
-        }
-
-        if (!ctx.sent && !ctx.aborted) {
-          ctx.status(204).end();
-        }
-
-        finishResponse();
-      };
-
-      const runHandler = (): void => {
-        if (ctx.sent || ctx.aborted) {
-          release();
-          return;
-        }
-
-        try {
-          const result = route.handler(ctx);
-          if (isThenable(result)) {
-            result.then(afterHandler, handleError);
-            return;
-          }
-          afterHandler(result);
-        } catch (err) {
-          handleError(err);
-        }
-      };
-
-      const runPreHandler = (): void => {
-        if (ctx.sent || ctx.aborted) {
-          release();
-          return;
-        }
-
-        try {
-          const preHandler = route.preHandler(ctx);
-          if (isThenable(preHandler)) {
-            preHandler.then(runHandler, handleError);
-            return;
-          }
-          runHandler();
-        } catch (err) {
-          handleError(err);
-        }
-      };
-
-      try {
-        if (route.validators) {
-          runValidators(ctx, route.validators);
-        }
-
-        const onRequest = route.onRequest(ctx);
-        if (isThenable(onRequest)) {
-          onRequest.then(runPreHandler, handleError);
-          return;
-        }
-
-        runPreHandler();
-      } catch (err) {
-        handleError(err);
-      }
+      const runner = PIPELINE_RUNNER_POOL.acquire(this, ctx, route);
+      runner.run();
     };
   }
 
@@ -457,6 +358,147 @@ export class VoltrixServer {
   }
 }
 
+// ─── Pipeline Runner (Zero Allocation Hot Path) ───────────────────────────────
+
+class PipelineRunner {
+  private server!: VoltrixServer;
+  private ctx!: Ctx;
+  private route!: RuntimeRoute;
+  private released = false;
+
+  init(server: VoltrixServer, ctx: Ctx, route: RuntimeRoute): void {
+    this.server = server;
+    this.ctx = ctx;
+    this.route = route;
+    this.released = false;
+  }
+
+  run(): void {
+    try {
+      if (this.route.validators) {
+        runValidators(this.ctx, this.route.validators);
+      }
+
+      const onRequest = this.route.onRequest(this.ctx);
+      if (isThenable(onRequest)) {
+        onRequest.then(this.runPreHandler, this.handleError);
+        return;
+      }
+
+      this.runPreHandler();
+    } catch (err) {
+      this.handleError(err);
+    }
+  }
+
+  private readonly runPreHandler = (): void => {
+    if (this.ctx.sent || this.ctx.aborted) {
+      this.release();
+      return;
+    }
+
+    try {
+      const preHandler = this.route.preHandler(this.ctx);
+      if (isThenable(preHandler)) {
+        preHandler.then(this.runHandler, this.handleError);
+        return;
+      }
+      this.runHandler();
+    } catch (err) {
+      this.handleError(err);
+    }
+  };
+
+  private readonly runHandler = (): void => {
+    if (this.ctx.sent || this.ctx.aborted) {
+      this.release();
+      return;
+    }
+
+    try {
+      const result = this.route.handler(this.ctx);
+      if (isThenable(result)) {
+        result.then(this.afterHandler, this.handleError);
+        return;
+      }
+      this.afterHandler(result);
+    } catch (err) {
+      this.handleError(err);
+    }
+  };
+
+  private readonly afterHandler = (result: unknown): void => {
+    if (!this.ctx.sent && !this.ctx.aborted && result !== undefined) {
+      this.ctx.json(result, this.route.serializer?.serialize);
+    }
+
+    if (!this.ctx.sent && !this.ctx.aborted) {
+      this.ctx.status(204).end();
+    }
+
+    this.finishResponse();
+  };
+
+  private readonly finishResponse = (): void => {
+    if (this.ctx.aborted) {
+      this.release();
+      return;
+    }
+
+    try {
+      const onResponse = this.route.onResponse(this.ctx);
+      if (isThenable(onResponse)) {
+        onResponse.then(this.release, this.release);
+        return;
+      }
+    } catch {
+      // The response is already on the wire at this point; just release the ctx.
+    }
+
+    this.release();
+  };
+
+  private readonly handleError = (err: unknown): void => {
+    if (this.ctx.sent || this.ctx.aborted) {
+      this.release();
+      return;
+    }
+
+    (this.server as any)._sendError(this.ctx, err).then(this.release, this.release);
+  };
+
+  private readonly release = (): void => {
+    if (!this.released) {
+      this.released = true;
+      (this.server as any)._pool.release(this.ctx);
+      PIPELINE_RUNNER_POOL.release(this);
+    }
+  };
+}
+
+class PipelineRunnerPool {
+  private readonly pool: PipelineRunner[] = [];
+
+  constructor(initialSize = 256) {
+    for (let i = 0; i < initialSize; i++) {
+      this.pool.push(new PipelineRunner());
+    }
+  }
+
+  acquire(server: VoltrixServer, ctx: Ctx, route: RuntimeRoute): PipelineRunner {
+    const runner = this.pool.pop() ?? new PipelineRunner();
+    runner.init(server, ctx, route);
+    return runner;
+  }
+
+  release(runner: PipelineRunner): void {
+    runner.init(null as any, null as any, null as any); // Clear references
+    this.pool.push(runner);
+  }
+}
+
+const PIPELINE_RUNNER_POOL = new PipelineRunnerPool(256);
+
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
 /**
@@ -476,15 +518,6 @@ export function createServer(opts?: VoltrixServerOptions): VoltrixServer {
  */
 function toUwsPattern(pattern: string): string {
   return pattern;
-}
-
-function buildParamsFromReq(req: uWS.HttpRequest, names: string[]): Record<string, string> {
-  if (names.length === 0) return EMPTY_PARAMS;
-  const params: Record<string, string> = {};
-  for (let i = 0; i < names.length; i++) {
-    params[names[i]] = decodeURIComponent(req.getParameter(i) ?? '');
-  }
-  return params;
 }
 
 /**

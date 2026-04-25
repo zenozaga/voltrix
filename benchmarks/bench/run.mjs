@@ -204,7 +204,7 @@ async function main() {
   console.log(`\n🚀 Voltrix Benchmark Suite  (${NUM_CORES} CPU cores detected)\n`);
 
   const rowsSingle = await runSuite(SERVERS_SINGLE, '── SINGLE-CORE (1 thread each)');
-  const rowsMulti  = await runSuite(SERVERS_MULTI,  `── MULTI-CORE  (${NUM_CORES} threads each)`);
+  // const rowsMulti  = await runSuite(SERVERS_MULTI,  `── MULTI-CORE  (${NUM_CORES} threads each)`);
 
   // ── Summary ──
   console.log('\n' + '═'.repeat(70));
@@ -212,6 +212,7 @@ async function main() {
   console.log('═'.repeat(70));
   printTable(SERVERS_SINGLE, rowsSingle);
 
+  /*
   console.log('\n' + '═'.repeat(70));
   console.log(`  MULTI-CORE SUMMARY  (${NUM_CORES} cores)`);
   console.log('═'.repeat(70));
@@ -230,6 +231,7 @@ async function main() {
       .join('  ');
     console.log(`  ${row.scenario.padEnd(34)} ${ratios}`);
   }
+  */
 
   console.log('\n✅ Done.\n');
 }

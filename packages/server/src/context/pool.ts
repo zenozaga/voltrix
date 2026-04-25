@@ -48,12 +48,12 @@ export class CtxPool {
   acquire<P extends Record<string, string>>(
     res: HttpResponse,
     req: HttpRequest,
-    params: P,
+    paramNames: string[],
     method: string,
     url: string,
   ): Ctx<P> {
     const ctx = (this.pool.pop() ?? new Ctx()) as Ctx<P>;
-    ctx.initialize(res, req, params, method, url);
+    ctx.initialize(res, req, paramNames, method, url);
     // Reset plugin-decorated properties so pooled instances don't bleed state
     const resets = this._decoratedResets;
     for (let i = 0; i < resets.length; i++) {

@@ -40,7 +40,7 @@ export function parseQueryString(qs: string): Record<string, unknown> {
     const rawKey = qs.slice(i, eq);
     if (!rawKey) { i = eq + 1; continue; }
 
-    const key = decodeURIComponent(rawKey.replace(/\+/g, ' '));
+    const key = decodeURIComponent(replacePlus(rawKey));
 
     if (eq >= len || qs[eq] === '&') {
       out[key] = '';
@@ -53,13 +53,27 @@ export function parseQueryString(qs: string): Record<string, unknown> {
     while (end < len && qs[end] !== '&') end++;
 
     const rawVal = qs.slice(eq + 1, end);
-    const val = decodeURIComponent(rawVal.replace(/\+/g, ' '));
+    const val = decodeURIComponent(replacePlus(rawVal));
 
     out[key] = coerceQueryValue(val);
     i = end + 1;
   }
 
   return out;
+}
+
+function replacePlus(s: string): string {
+  let i = s.indexOf('+');
+  if (i === -1) return s;
+  let res = '';
+  let last = 0;
+  while (i !== -1) {
+    res += s.slice(last, i) + ' ';
+    last = i + 1;
+    i = s.indexOf('+', last);
+  }
+  if (last < s.length) res += s.slice(last);
+  return res;
 }
 
 function coerceQueryValue(val: string): unknown {
