@@ -26,6 +26,8 @@ interface RuntimeRoute extends Omit<CompiledRoute, 'onRequest' | 'preHandler' | 
   onResponse: InlinePipeline;
 }
 
+const EMPTY_PARAMS = Object.freeze({}) as Record<string, string>;
+
 export interface VoltrixServerOptions {
   /** Initial Ctx pool size. Default: 64. */
   poolSize?: number;
@@ -272,7 +274,7 @@ export class VoltrixServer {
       const handler = this._notFoundHandler;
       this._app.any('/*', async (res, req) => {
         const url = req.getUrl();
-        const ctx = this._pool.acquire(res, req, {}, req.getMethod().toUpperCase(), url);
+        const ctx = this._pool.acquire(res, req, EMPTY_PARAMS, req.getMethod().toUpperCase(), url);
         try {
           await handler(ctx);
           if (!ctx.sent && !ctx.aborted) ctx.status(404).end();
@@ -477,7 +479,7 @@ function toUwsPattern(pattern: string): string {
 }
 
 function buildParamsFromReq(req: uWS.HttpRequest, names: string[]): Record<string, string> {
-  if (names.length === 0) return {};
+  if (names.length === 0) return EMPTY_PARAMS;
   const params: Record<string, string> = {};
   for (let i = 0; i < names.length; i++) {
     params[names[i]] = decodeURIComponent(req.getParameter(i) ?? '');

@@ -36,21 +36,6 @@ import { STATUS_LINES, CONTENT_TYPES } from '../common/constants.js';
  * ```
  */
 export class Ctx<P extends Record<string, string> = Record<string, string>> {
-  // ─── Per-request metadata store ──────────────────────────────────────────
-
-  /**
-   * Built-in per-request metadata store.
-   * Set values in `onRequest` / `preHandler` hooks; read them in the handler.
-   * Reset to `{}` on every request — safe for object pool reuse.
-   *
-   * @example
-   * ```ts
-   * ctx.locals.user = { id: 42, role: 'admin' };
-   * const user = ctx.locals.user as User;
-   * ```
-   */
-  locals: Record<string, unknown> = {};
-
   // ─── Internal uWS handle ─────────────────────────────────────────────────
 
   private _res!: HttpResponse;
@@ -60,9 +45,11 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
   private _method!:   string;
   private _url!:      string;
   private _params!:   P;
-  private _reqHeaders!: Record<string, string>;
+  private _reqHeaderPairs: string[] = [];
+  private _reqHeaders: Record<string, string> | null = null;
   private _queryRaw!:  string;
   private _query:      Record<string, unknown> | null = null;
+  private _locals:     Record<string, unknown> | null = null;
 
   // ─── Body state ───────────────────────────────────────────────────────────
 
@@ -78,6 +65,8 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
   private _aborted     = false;
   /** Flat array: [name0, value0, name1, value1, ...]. */
   private _resHeaders: string[] = [];
+  /** Lowercase names aligned with `_resHeaders` pairs. */
+  private _resHeaderNames: string[] = [];
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -95,23 +84,23 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
     this._params      = params;
     this._queryRaw    = req.getQuery() ?? '';
     this._query       = null;
-
-    this._reqHeaders  = {};
+    this._reqHeaders  = null;
+    this._reqHeaderPairs.length = 0;
     req.forEach((key, val) => {
-      (this._reqHeaders as Record<string, string>)[key] = val;
+      this._reqHeaderPairs.push(key, val);
     });
 
     this._statusCode  = 200;
     this._sent        = false;
     this._aborted     = false;
-    this._resHeaders  = [];
+    this._resHeaders.length = 0;
+    this._resHeaderNames.length = 0;
 
     this._bodyBuffer  = null;
     this._bodyText    = null;
     this._bodyJson    = undefined;
     this._bodyLoaded  = false;
-
-    this.locals = {};
+    this._locals = null;
 
     res.onAborted(() => { this._aborted = true; });
   }
@@ -122,13 +111,18 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    */
   release(): void {
     (this._res as unknown)        = null;
-    (this._reqHeaders as unknown) = null;
+    this._reqHeaders = null;
+    this._reqHeaderPairs.length = 0;
     (this._params as unknown)     = null;
+    this._queryRaw = '';
+    this._query = null;
     this._bodyBuffer  = null;
     this._bodyText    = null;
     this._bodyJson    = undefined;
-    this._resHeaders  = [];
-    (this.locals as unknown) = null;
+    this._bodyLoaded  = false;
+    this._resHeaders.length = 0;
+    this._resHeaderNames.length = 0;
+    this._locals = null;
   }
 
   // ─── Request API ─────────────────────────────────────────────────────────
@@ -141,6 +135,21 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
 
   /** Matched route parameters. */
   get params(): P { return this._params; }
+
+  /**
+   * Built-in per-request metadata store.
+   * Allocated lazily so requests that never touch locals do not pay for it.
+   */
+  get locals(): Record<string, unknown> {
+    if (this._locals === null) {
+      this._locals = {};
+    }
+    return this._locals;
+  }
+
+  set locals(value: Record<string, unknown>) {
+    this._locals = value;
+  }
 
   /** Parsed query string — lazily evaluated on first access. */
   get query(): Record<string, unknown> {
@@ -155,11 +164,30 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    * Returns `undefined` if the header is absent.
    */
   header(name: string): string | undefined {
-    return this._reqHeaders[name.toLowerCase()];
+    const lower = name.toLowerCase();
+    const headers = this._reqHeaders;
+    if (headers !== null) return headers[lower];
+
+    const pairs = this._reqHeaderPairs;
+    for (let i = pairs.length - 2; i >= 0; i -= 2) {
+      if (pairs[i] === lower) return pairs[i + 1];
+    }
+    return undefined;
   }
 
   /** Returns all request headers as a plain object (lowercase keys). */
-  headers(): Record<string, string> { return this._reqHeaders; }
+  headers(): Record<string, string> {
+    if (this._reqHeaders !== null) return this._reqHeaders;
+
+    const headers: Record<string, string> = {};
+    const pairs = this._reqHeaderPairs;
+    for (let i = 0; i < pairs.length; i += 2) {
+      headers[pairs[i]] = pairs[i + 1];
+    }
+
+    this._reqHeaders = headers;
+    return headers;
+  }
 
   // ─── Body API ─────────────────────────────────────────────────────────────
 
@@ -169,7 +197,7 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    */
   async buffer(): Promise<Buffer> {
     if (!this._bodyLoaded) {
-      this._bodyBuffer = await readBody(this._res, getContentLength(this._reqHeaders));
+      this._bodyBuffer = await readBody(this._res, getContentLength(this._reqHeaderPairs));
       this._bodyLoaded = true;
     }
     return this._bodyBuffer!;
@@ -230,12 +258,15 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    */
   setHeader(name: string, value: string): this {
     const lower = name.toLowerCase();
-    for (let i = 0; i < this._resHeaders.length; i += 2) {
-      if (this._resHeaders[i].toLowerCase() === lower) {
-        this._resHeaders[i + 1] = value;
+    const names = this._resHeaderNames;
+    for (let i = 0; i < names.length; i++) {
+      if (names[i] === lower) {
+        this._resHeaders[i * 2] = name;
+        this._resHeaders[i * 2 + 1] = value;
         return this;
       }
     }
+    names.push(lower);
     this._resHeaders.push(name, value);
     return this;
   }
@@ -245,7 +276,7 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
    * Sets Content-Type to application/json.
    * An optional `serialize` function replaces JSON.stringify.
    */
-  json(data: unknown, serialize?: (v: unknown) => string): void {
+  json(data: unknown, serialize?: (v: unknown) => BodyInput): void {
     if (this._sent || this._aborted) return;
     const body = (serialize ?? JSON.stringify)(data) ?? 'null';
     this.setHeader('Content-Type', CONTENT_TYPES.JSON);
@@ -310,16 +341,19 @@ export class Ctx<P extends Record<string, string> = Record<string, string>> {
 
   private _hasResHeader(name: string): boolean {
     const lower = name.toLowerCase();
-    for (let i = 0; i < this._resHeaders.length; i += 2) {
-      if (this._resHeaders[i].toLowerCase() === lower) return true;
+    const names = this._resHeaderNames;
+    for (let i = 0; i < names.length; i++) {
+      if (names[i] === lower) return true;
     }
     return false;
   }
 }
 
-function getContentLength(headers: Record<string, string>): number | undefined {
-  const raw = headers['content-length'];
-  if (!raw) return undefined;
-  const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+function getContentLength(headerPairs: string[]): number | undefined {
+  for (let i = headerPairs.length - 2; i >= 0; i -= 2) {
+    if (headerPairs[i] !== 'content-length') continue;
+    const parsed = Number(headerPairs[i + 1]);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+  }
+  return undefined;
 }

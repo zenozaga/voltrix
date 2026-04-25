@@ -83,7 +83,10 @@ function coerceQueryValue(val: string): unknown {
  */
 export function concatChunks(chunks: Uint8Array[], totalBytes?: number): Buffer {
   if (chunks.length === 0) return Buffer.alloc(0);
-  if (chunks.length === 1) return Buffer.from(chunks[0]);
+  if (chunks.length === 1) {
+    const chunk = chunks[0];
+    return Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  }
 
   const total = totalBytes ?? chunks.reduce((s, c) => s + c.byteLength, 0);
   const out = Buffer.allocUnsafe(total);

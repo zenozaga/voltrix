@@ -50,7 +50,7 @@ beforeAll(async () => {
         compile(_schema) {
           return (value: unknown) => {
             serializerUsed = true;
-            return JSON.stringify(value);
+            return Buffer.from(JSON.stringify(value));
           };
         },
       });
@@ -131,7 +131,10 @@ describe('Async plugin', () => {
 
 describe('Serializer compiler plugin', () => {
   it('custom compiler is used for routes with a schema', async () => {
-    await fetch(`${BASE}/plugin/serializer`);
+    const routeRes = await fetch(`${BASE}/plugin/serializer`);
+    expect(routeRes.status).toBe(200);
+    expect(await routeRes.json()).toEqual({ ok: true });
+
     const res = await fetch(`${BASE}/plugin/serializer-used`);
     const body = await res.json() as { used: boolean };
     expect(body.used).toBe(true);

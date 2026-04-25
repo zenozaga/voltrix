@@ -1,8 +1,10 @@
+import type { BodyInput } from '../common/normalize.js';
+
 /**
- * A compiled serializer function — takes a value and returns its serialized string.
+ * A compiled serializer function — takes a value and returns a body accepted by uWS.
  * Produced by a SerializerCompiler at startup; zero schema-lookup cost in hot path.
  */
-export type CompiledSerializer = (value: unknown) => string;
+export type CompiledSerializer = (value: unknown) => BodyInput;
 
 /**
  * Pluggable serializer compiler interface.
