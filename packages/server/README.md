@@ -105,3 +105,52 @@ server.post('/users', async (ctx) => {
   }
 });
 ```
+
+### 4. Serialización de Alto Rendimiento (Fast JSON / Zero-Copy)
+Voltrix permite delegar la serialización JSON a librerías como `fast-json-stringify`, que pueden ser significativamente más rápidas que `JSON.stringify` nativo al usar esquemas pre-compilados y evitar allocations innecesarias en el hot-path.
+
+#### Uso por Ruta (Ad-hoc)
+Puedes pasar un serializador específico directamente al método `ctx.json()`. Esto es ideal para optimizar rutas críticas de forma aislada.
+
+```typescript
+import fastJson from 'fast-json-stringify';
+
+const serializeUser = fastJson({
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    name: { type: 'string' }
+  }
+});
+
+server.get('/users/:id', (ctx) => {
+  const user = { id: ctx.params.id, name: 'John Doe' };
+  // Pasamos el serializador como segundo argumento
+  ctx.json(user, serializeUser);
+});
+```
+
+#### Uso Global (Compiler Pattern)
+Para una arquitectura más limpia, puedes definir un **Serializer Compiler**. Voltrix compilará los esquemas automáticamente al arranque (startup), eliminando el costo de búsqueda de esquemas durante las peticiones.
+
+```typescript
+const myCompiler = {
+  compile: (schema) => fastJson(schema)
+};
+
+// Configuramos el compilador global
+server.setSerializerCompiler(myCompiler);
+
+// Ahora podemos usar .serialize() en el builder de rutas
+server.get('/users/:id', (ctx) => {
+  return { id: ctx.params.id };
+}).serialize({
+  type: 'object',
+  properties: {
+    id: { type: 'string' }
+  }
+});
+```
+
+Este patrón asegura que en el "hot path", Voltrix use directamente la función pre-compilada, acercándose al límite físico de transferencia de datos (Zero-Copy).
+
