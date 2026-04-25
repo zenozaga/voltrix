@@ -25,4 +25,4 @@ export interface RequestContext {
 export type MiddlewareFn = (context: RequestContext, next: () => Promise<any>) => Promise<any> | any;
 export type GuardFn = (context: RequestContext) => boolean | Promise<boolean>;
 export type InterceptorFn = (context: RequestContext, next: () => Promise<any>) => Promise<any>;
-export type FilterFn = (error: any, context: RequestContext) => any;
+export type FilterFn = (error: any, context: RequestContext) => any;

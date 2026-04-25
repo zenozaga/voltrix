@@ -1,4 +1,4 @@
-import type { Constructor, Token, AbstractConstructor } from './providers';
+import type { Constructor, Token, AbstractConstructor } from '.\/providers.js';
 
 type ClassLike<T = unknown> = Constructor<T> | AbstractConstructor<T>;
 type InjectedProp = {

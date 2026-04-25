@@ -3,9 +3,9 @@ import {
   ProviderNotFoundError,
   CircularDependencyError,
   InvalidProviderError,
-} from './errors';
-import { InjectableStore } from './utils/injectable-store';
-import { Hooks } from './hooks';
+} from '.\/errors.js';
+import { InjectableStore } from '.\/utils/injectable-store.js';
+import { Hooks } from '.\/hooks.js';
 
 import type {
   Provider,
@@ -16,7 +16,7 @@ import type {
   ProviderResolver,
   FactoryProvider,
   AbstractConstructor,
-} from './providers';
+} from '.\/providers.js';
 
 import {
   META,
@@ -25,7 +25,7 @@ import {
   getInjectedProps,
   getMetadata,
   getInjectedOptional,
-} from './metadata';
+} from '.\/metadata.js';
 
 type FactoryFn<T = unknown> = (args: unknown[]) => T;
 type InstanceRecord = { value: unknown; expiresAt?: number };

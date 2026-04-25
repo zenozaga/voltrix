@@ -1,13 +1,13 @@
 import 'reflect-metadata';
-import { DIContainer } from './container';
+import { DIContainer } from '.\/container.js';
 
-export * from './providers';
-export * from './errors';
-export * from './metadata';
-export * from './decorators';
-export * from './hooks';
-export * from './utils/fast-timeout';
-export * from './utils/fast-promise-cache';
-export * from './container';
+export * from '.\/providers.js';
+export * from '.\/errors.js';
+export * from '.\/metadata.js';
+export * from '.\/decorators.js';
+export * from '.\/hooks.js';
+export * from '.\/utils/fast-timeout.js';
+export * from '.\/utils/fast-promise-cache.js';
+export * from '.\/container.js';
 
 export const container = DIContainer.create();

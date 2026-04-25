@@ -1,6 +1,6 @@
-import type { Constructor, Token } from './providers';
-import { defineMetadata, META } from './metadata';
-import { InjectableStore } from './utils/injectable-store';
+import type { Constructor, Token } from '.\/providers.js';
+import { defineMetadata, META } from '.\/metadata.js';
+import { InjectableStore } from '.\/utils/injectable-store.js';
 
 export interface InjectableOptions {
   token?: Token;

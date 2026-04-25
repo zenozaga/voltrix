@@ -21,6 +21,7 @@ export class Voltrix extends Renderer {
   readonly server: VoltrixServer;
   private globalMiddlewares: Handlers.Middleware[] = [];
   private errorHandlers: Handlers.ErrorMiddleware[] = [];
+  private _transformers: Handlers.TransformerFn[] = [];
 
   constructor(options?: VoltrixOptions) {
     super();
@@ -29,7 +30,7 @@ export class Voltrix extends Renderer {
   }
 
   private _setupBridge(): void {
-    this.server.onRequest(async (ctx: Ctx) => {
+    this.server.onRequest((ctx: Ctx) => {
       const eCtx = ctx as ExpressCtx;
       const req = new Request(ctx);
       const res = new Response(ctx, this);
@@ -38,18 +39,20 @@ export class Voltrix extends Renderer {
 
       if (this.globalMiddlewares.length === 0) return;
 
-      for (const mw of this.globalMiddlewares) {
-        await new Promise<void>((resolve, reject) => {
-          const next = (err?: unknown) => err ? reject(err) : resolve();
-          try {
-            const r = mw(req, res, next);
-            if (r instanceof Promise) r.catch(reject);
-          } catch (e) {
-            reject(e);
-          }
-        });
-        if (ctx.sent || ctx.aborted) return;
-      }
+      return (async () => {
+        for (const mw of this.globalMiddlewares) {
+          await new Promise<void>((resolve, reject) => {
+            const next = (err?: unknown) => err ? reject(err) : resolve();
+            try {
+              const r = mw(req, res, next);
+              if (r instanceof Promise) r.catch(reject);
+            } catch (e) {
+              reject(e);
+            }
+          });
+          if (ctx.sent || ctx.aborted) return;
+        }
+      })();
     });
 
     this.server.onError(async (ctx: Ctx, err: unknown) => {
@@ -225,6 +228,21 @@ export class Voltrix extends Renderer {
   ws(pattern: string, behavior: any) {
     (this.server as any)._app.ws(pattern, behavior);
     return this;
+  }
+
+  useTransformer(fn: Handlers.TransformerFn): this {
+    this._transformers.push(fn);
+    return this;
+  }
+
+  async runTransform(schema: any, data: any, type: string, key?: string): Promise<any> {
+    if (this._transformers.length === 0) return data;
+
+    let current = data;
+    for (const fn of this._transformers) {
+      current = await fn({ schema, data: current, type, key });
+    }
+    return current;
   }
 
   clearAllCaches() {

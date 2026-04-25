@@ -1,6 +1,6 @@
 // injectable-store.ts
 
-import { Constructor, Token } from '../providers';
+import { Constructor, Token } from '.\./providers.js';
 
 export class InjectableStore {
   private static _map = new Map<Token, Constructor | true>();

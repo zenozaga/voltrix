@@ -3,8 +3,8 @@
  * Zero code duplication with hyper-decor pattern
  */
 
-import { DecoratorFactory } from '../__internal/decorator-factory';
-import { MetadataRegistry } from '../__internal/metadata-registry';
+import { DecoratorFactory } from '.\./__internal/decorator-factory.js';
+import { MetadataRegistry } from '.\./__internal/metadata-registry.js';
 import type { Middleware } from '@voltrix/core';
 
 /* ============================================================

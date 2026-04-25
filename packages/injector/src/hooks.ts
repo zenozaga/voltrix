@@ -1,4 +1,4 @@
-import type { HookEvent } from './providers';
+import type { HookEvent } from '.\/providers.js';
 
 export type Hook = (ev: HookEvent) => void;
 

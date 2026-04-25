@@ -1,4 +1,4 @@
-import { MetadataRegistry, type MetadataBag } from '../__internal/metadata-registry';
+import { MetadataRegistry, type MetadataBag } from '.\./__internal/metadata-registry.js';
 import { DIContainer } from '@voltrix/injector';
 import { Voltrix } from '@voltrix/express';
 import {
@@ -9,7 +9,7 @@ import {
   IRequest,
   IResponse
 } from '@voltrix/core';
-import { DiscoveryCollector, type ProcessorContext } from './discovery.collector';
+import { DiscoveryCollector, type ProcessorContext } from '.\/discovery.collector.js';
 
 
 export interface VoltrixApplication {
@@ -193,10 +193,7 @@ async function registerControllerRoutes(node: ControllerNode, container: DIConta
           else res.send(String(result));
         }
       } catch (e: any) {
-        console.error(`ERROR in route [${route.method}] ${route.fullPath}:`, e.stack || e.message);
-        if (!res.headersSent && !(res as any).isAborted) {
-          res.status(500).json({ error: 'Internal Server Error' });
-        }
+        throw e;
       }
     };
 
