@@ -40,6 +40,7 @@ Multi-core · 24 threads · SO_REUSEPORT · loopback:
 | [`@voltrix/injector`](packages/injector) | Dependency injection container with `reflect-metadata` |
 | [`@voltrix/swagger`](packages/swagger) | OpenAPI 3.0 spec generator — programmatic and decorator APIs |
 | [`@voltrix/events`](packages/events) | Typed event bus with priority, wildcards, middleware, and pluggable transport |
+| [`@voltrix/mq`](packages/mq) | High-performance distributed message queue with group concurrency limits, reactive poller, lease fencing, DLQ, and DI decorators |
 | [`@voltrix/core`](packages/core) | Shared types and interfaces |
 
 ## Quick Start — `@voltrix/server`
