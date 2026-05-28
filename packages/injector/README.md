@@ -1,23 +1,23 @@
 # @voltrix/injector
 
-Un contenedor de Inyección de Dependencias (DI) robusto, ultra-rápido y con soporte completo para `reflect-metadata`. 
+A robust, ultra-fast, and lightweight Dependency Injection (DI) container with full support for `reflect-metadata` and class-based decorators.
 
-## ¿Para qué sirve?
+## Features
 
-- Inyecta automáticamente servicios, repositorios y configuraciones en tus controladores.
-- Gestiona el ciclo de vida de las dependencias (`SINGLETON`, `TRANSIENT`, `SCOPED`).
-- Resuelve árboles de dependencias complejos sin overhead de ejecución gracias a su caché interna.
-- Totalmente agnóstico del framework web, puede usarse de forma independiente.
+- **Automatic Constructor Injection**: Inject services, repositories, and configurations cleanly into your controllers.
+- **Multiple Lifecycles Supported**: Manage provider lifetimes with ease (`SINGLETON`, `TRANSIENT`, `SCOPED`).
+- **Dependency Graph Resolution**: Fast, cached dependency resolution designed to handle complex provider trees with zero overhead.
+- **Web-Agnostic Core**: Completely detached from any web framework; can be used as a general-purpose IoC container anywhere.
 
-## Instalación
+## Installation
 
 ```bash
 npm install @voltrix/injector reflect-metadata
 ```
 
-> **Nota:** Debes importar `reflect-metadata` una sola vez en el punto de entrada de tu aplicación.
+> **Note:** Remember to import `reflect-metadata` once at your application's entry point.
 
-## Ejemplo de Uso
+## Usage Example
 
 ```typescript
 import 'reflect-metadata';
@@ -37,7 +37,7 @@ class UserService {
   }
 }
 
-// Resolver manualmente (normalmente `@voltrix/decorator` hace esto por ti)
+// Manual resolution (usually '@voltrix/decorator' handles this bootstrap for you)
 const container = new DIContainer();
 container.addProvider(DatabaseService);
 container.addProvider(UserService);
@@ -45,3 +45,7 @@ container.addProvider(UserService);
 const userService = container.resolve(UserService);
 console.log(userService.getUser());
 ```
+
+## License
+
+MIT

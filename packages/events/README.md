@@ -1,37 +1,41 @@
 # @voltrix/events
 
-Un Event Bus tipado hiper-rápido para el ecosistema **Voltrix**, diseñado para comunicación síncrona y asíncrona entre módulos.
+A hyper-fast, strongly-typed Event Bus for the **Voltrix** ecosystem, designed for synchronous and asynchronous communication between modules.
 
-## ¿Para qué sirve?
+## Features
 
-- **Desacoplamiento:** Permite que distintas partes de tu aplicación se comuniquen sin importar referencias directas.
-- **Soporte para Wildcards (`*`):** Suscríbete a patrones de eventos completos (ej. `user.*`).
-- **Prioridades:** Define el orden exacto en el que los listeners deben ejecutarse.
-- **Pluggable:** Listo para ser integrado con transportes externos (NATS, Redis) en el futuro.
+- **Decoupling**: Connect distinct layers and services of your application without introducing hard dependencies or import circles.
+- **Pattern Matching & Wildcards (`*`)**: Subscribe to entire namespaces and event paths dynamically (e.g., `user.*`).
+- **Priority Execution**: Control the exact execution order of your event listeners with numerical priorities.
+- **Pluggable Architecture**: Easily integrates with local event loops or pluggable distributed transports (such as Redis or NATS) in production.
 
-## Instalación
+## Installation
 
 ```bash
 npm install @voltrix/events
 ```
 
-## Ejemplo de Uso
+## Usage Example
 
 ```typescript
 import { EventBus } from '@voltrix/events';
 
 const bus = new EventBus();
 
-// Suscribirse a un evento específico con alta prioridad
+// Subscribe to a specific event with high execution priority
 bus.on('user.created', async (payload) => {
-  console.log('Usuario creado:', payload.name);
+  console.log('User created:', payload.name);
 }, { priority: 10 });
 
-// Suscribirse a todos los eventos que empiecen por "user."
+// Subscribe to all sub-events under the "user" namespace
 bus.on('user.*', (payload) => {
-  console.log('Log de auditoría para usuario:', payload);
+  console.log('Audit log for user action:', payload);
 });
 
-// Emitir el evento
+// Emit the event
 await bus.emit('user.created', { name: 'Zeno' });
 ```
+
+## License
+
+MIT

@@ -1,33 +1,33 @@
 # @voltrix/express
 
-El adaptador/bridge de **Express.js** hiper-optimizado para **Voltrix**. Permite migrar aplicaciones existentes de Express a Voltrix sin tener que reescribir todo el código, multiplicando el rendimiento por ~4x-10x en comparación con Node+Express puro.
+A hyper-optimized **Express.js** compatibility adapter and bridge built on top of **Voltrix**. It allows you to migrate existing Express applications to Voltrix without rewriting your codebase, boosting performance by **~4x to 10x** compared to pure Node.js + Express.
 
-## ¿Para qué sirve?
+## Features
 
-- **Compatibilidad Express:** Provee las APIs familiares (`req.json()`, `res.status().json()`, `res.send()`, `app.use()`).
-- **Migración sin fricción:** Usa la misma firma de middlewares `(req, res, next)`.
-- **Rendimiento Nativo:** Delega todo el enrutamiento al Kernel `PipelineRunner` y al `RadixTree` de `@voltrix/server`. Las pruebas demuestran que usar este adaptador tiene solo un 1-2% de overhead frente al Kernel puro.
+- **Express Compatibility**: Provides familiar and standard APIs like `req.json()`, `res.status().json()`, `res.send()`, and `app.use()`.
+- **Frictionless Migration**: Reuses your existing middleware stack with the standard `(req, res, next)` signature.
+- **Native Performance**: Delegates all heavy routing and middleware execution to the underlying `@voltrix/server` `PipelineRunner` and `RadixTree`. Benchmarks demonstrate that this adapter incurs only a 1-2% overhead compared to pure Voltrix Server!
 
-## Instalación
+## Installation
 
 ```bash
 npm install @voltrix/express
 ```
 
-## Ejemplo de Uso
+## Usage Example
 
 ```typescript
 import voltrix from '@voltrix/express';
 
 const app = voltrix();
 
-// Middleware estilo Express
+// Standard Express-style middleware
 app.use((req, res, next) => {
   console.log(`[LOG] ${req.method} ${req.url}`);
   next();
 });
 
-// Rutas familiares
+// Familiar route declarations
 app.get('/users/:id', (req, res) => {
   res.json({ id: req.getParam('id') });
 });
@@ -40,3 +40,7 @@ app.post('/users', async (req, res) => {
 await app.listen(3000);
 console.log('Listening on http://localhost:3000');
 ```
+
+## License
+
+MIT

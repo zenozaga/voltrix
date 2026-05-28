@@ -1,26 +1,28 @@
 # @voltrix/decorator
 
-Un sistema avanzado de decoradores experimentales para **Voltrix**, inspirado en la elegancia de frameworks como NestJS o Spring Boot, pero diseñado para tener overhead cero en tiempo de ejecución (O(1)).
+An advanced, experimental decorator system for **Voltrix**, inspired by the elegance of NestJS and Spring Boot, but engineered to have zero runtime overhead ($O(1)$ routing).
 
-## ¿Para qué sirve?
+## Features
 
-- Permite definir controladores web y rutas de forma declarativa y fuertemente tipada.
-- Resuelve dependencias automáticamente usando `@voltrix/injector`.
-- Soporta extracción de parámetros con validación automática (`@Body`, `@Param`, `@Query`, `@Header`).
-- Auto-descubrimiento recursivo de Módulos (Bootstrapping completo de la App con una sola clase).
-- Soporte para seguridad declarativa (`@Roles`, `@Scopes`, `@Public`).
+- **Declarative Web Controllers**: Declare HTTP controllers, routes, and method mappings declaratively via decorators (`@Controller`, `@GET`, `@POST`, `@PUT`, `@DELETE`, `@PATCH`).
+- **Automatic Parameter Extraction**: Extract and validate request elements directly into your route handlers using `@Body`, `@Param`, `@Query`, and `@Header`.
+- **Dependency Injection**: Seamless integration with `@voltrix/injector` to automatically resolve controller dependencies.
+- **Recursive App Bootstrapping**: Modular structures through `@VoltrixApp` to automatically scan controllers, register dependency providers, and boot up servers.
+- **Declarative Security**: Easily attach custom route metadata for guards and policies (e.g. `@Roles`, `@Scopes`, `@Public`).
 
-## Instalación
+## Installation
 
 ```bash
 npm install @voltrix/decorator reflect-metadata
 ```
 
-## Ejemplo de Uso
+> **Note:** Make sure you import `reflect-metadata` exactly once at the entry point of your application.
+
+## Usage Example
 
 ```typescript
 import 'reflect-metadata';
-import { VoltrixApp, Controller, GET, POST, Body, Param, createVoltrix } from '@voltrix/decorator';
+import { Controller, GET, POST, Body, Param, createApplication } from '@voltrix/decorator';
 
 @Controller('users')
 class UserController {
@@ -35,12 +37,13 @@ class UserController {
   }
 }
 
-@VoltrixApp({
+// Automatic bootstrapping: resolves DI, registers routes, and boots the uWS server
+createApplication({
   port: 3000,
   controllers: [UserController]
-})
-class Application {}
-
-// Bootstrapping mágico: Resuelve DI, escanea controladores y levanta el servidor
-createApplication(Application);
+});
 ```
+
+## License
+
+MIT

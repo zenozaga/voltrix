@@ -1,23 +1,23 @@
 # @voltrix/server
 
-El motor web núcleo de **Voltrix**. Una envoltura hiper-optimizada alrededor de `uWebSockets.js` diseñada para no hacer ninguna asignación de memoria (Zero-Allocation) en el "hot path" de peticiones.
+The core web engine of **Voltrix**. A hyper-optimized wrapper around `uWebSockets.js` designed for zero memory allocations on the request hot path.
 
-## ¿Para qué sirve?
+## Features
 
-- **Rendimiento crudo:** Es el corazón que permite los ~90,000 req/s. 
-- **Enrutamiento:** Implementa un `RadixTree` ultra-eficiente para resolución de rutas (O(k)).
-- **Gestión de Memoria:** Utiliza un `CtxPool` (Object Pool pre-calentado) para reciclar objetos y evitar basura para el Garbage Collector.
-- **Middlewares y Hooks:** Define el pipeline de ejecución (`onRequest`, `onResponse`, `onError`) de manera altamente optimizada.
+- **Raw Speed**: Serves as the heart of Voltrix, achieving up to ~90,000 requests per second.
+- **Fast Routing**: Features an ultra-efficient Radix Tree routing engine ($O(k)$ lookup complexity).
+- **Zero-Allocation Memory Management**: Employs a pre-allocated object pool (`CtxPool`) to reuse context instances, mitigating Garbage Collection (GC) pauses during high throughput.
+- **Hooks & Execution Pipeline**: Implements pre-classified execution phases (`onRequest`, `onResponse`, `onError`) optimized for raw performance.
 
-## Instalación
+## Installation
 
-Este es el paquete recomendado si quieres el rendimiento máximo absoluto sin las comodidades/overhead de Express.
+This is the recommended package if you require the absolute highest performance ceiling without Express compatibility overhead.
 
 ```bash
 npm install @voltrix/server
 ```
 
-## Ejemplo de Uso
+## Usage Example
 
 ```typescript
 import { createServer } from '@voltrix/server';
@@ -25,7 +25,7 @@ import { createServer } from '@voltrix/server';
 const server = createServer({ poolSize: 5000 });
 
 server.get('/ping', (ctx) => {
-  // El contexto está tipado y protegido de allocations innecesarias
+  // Context is strongly typed and safe from allocations
   ctx.status(200).json({ pong: true });
 });
 
@@ -38,47 +38,47 @@ await server.listen({ port: 3000 });
 console.log('Listening on http://localhost:3000');
 ```
 
-## Características Avanzadas
+## Advanced Features
 
 ### 1. Metadata (`.meta`)
-Puedes añadir datos personalizados a cualquier ruta (muy útil para generar OpenAPI, controlar permisos o documentar).
+You can easily bind custom metadata parameters to any route (ideal for Swagger generators, authorization checks, or documentation tools).
 
 ```typescript
 server.get('/users/:id', (ctx) => {
   ctx.json({ id: ctx.params.id });
 }).meta('openapi', {
-  summary: 'Obtener usuario por ID',
+  summary: 'Get user by ID',
   tags: ['Users']
 });
 
-// Más tarde, puedes extraer todas las rutas con metadata 'openapi':
+// Later, you can extract all routes containing the 'openapi' metadata key:
 const docs = server.routes().byMeta('openapi');
 ```
 
-### 2. Plugins y Middlewares (`onRequest`)
-Voltrix usa un sistema de hooks súper ligero en lugar del clásico stack asíncrono de middlewares para mantener las allocations a cero. Puedes agrupar lógica usando `server.plugin()`.
+### 2. Plugins and Hooks (`onRequest`)
+Voltrix relies on lightweight hook phases instead of a traditional Express-like middleware stack array to keep context allocations at zero. You can organize your code into modular units using `server.plugin()`.
 
 ```typescript
-// Un plugin para autenticación
+// Authentication Plugin
 server.plugin(async (instance) => {
-  // Pre-alocar espacio en el contexto prototipo (O(1), zero-allocation)
+  // Decorate the context prototype (O(1), zero-allocation)
   instance.decorateCtx('user', null);
 
-  // Hook global que se ejecuta antes del handler
+  // Global request hook executed before the handler
   instance.onRequest((ctx) => {
     const auth = ctx.header('authorization');
     if (!auth) {
       ctx.status(401).json({ error: 'Missing token' });
-      return; // Corta la ejecución si no hay token
+      return; // Short-circuit execution
     }
-    // ctx.user ya está definido en el prototipo, reasignarlo es ultra rápido
+    // Reassignment is blazing fast as ctx.user is already on the prototype
     ctx.user = { id: 1, role: 'admin' }; 
   });
 });
 ```
 
-### 3. Validación de Payload (Validator)
-Puedes leer y validar el body de forma síncrona o asíncrona usando librerías como Zod integradas directamente en tu handler o a través de un wrapper.
+### 3. Schema Validation
+You can easily parse and validate payloads inside your handlers asynchronously or synchronously using validation libraries like Zod.
 
 ```typescript
 import { z } from 'zod';
@@ -92,7 +92,7 @@ server.post('/users', async (ctx) => {
   try {
     const rawBody = await ctx.readJson();
     
-    // Validación de Zod
+    // Zod validation
     const validData = UserSchema.parse(rawBody);
     
     ctx.status(201).json({ success: true, data: validData });
@@ -100,26 +100,26 @@ server.post('/users', async (ctx) => {
     if (error instanceof z.ZodError) {
       ctx.status(400).json({ error: 'Validation failed', issues: error.issues });
     } else {
-      ctx.status(500).json({ error: 'Internal error' });
+      ctx.status(500).json({ error: 'Internal server error' });
     }
   }
 });
 ```
 
-### 4. Serialización de Ultra-Alto Rendimiento (`JsonWriter`)
-Voltrix incluye una utilidad interna llamada `JsonWriter` diseñada para construir JSON directamente a nivel de bytes (**Buffer**) sin pasar por strings intermedios ni concatenaciones costosas. Esto permite una serialización **Zero-Copy** real.
+### 4. High-Performance Serializer (`JsonWriter`)
+Voltrix features an internal high-performance serializer utility called `JsonWriter` designed to construct JSON strings directly at the byte level (**Buffer**) with zero intermediate string concatenation. This allows genuine **Zero-Copy** serialization on critical hot paths.
 
-#### Uso con `JsonWriter` (Máximo Rendimiento)
-Es ideal para respuestas con estructuras conocidas donde cada microsegundo cuenta. El escritor se puede pre-alocar y resetear para evitar presión sobre el Garbage Collector.
+#### Manual Serialization (Maximum Throughput)
+Perfect for fixed, well-known response shapes where every microsecond matters. You can pre-allocate and reset a single writer instance to prevent GC pressure.
 
 ```typescript
 import { JsonWriter } from '@voltrix/server';
 
-// Pre-alocamos un buffer (puede vivir fuera del hot-path o en un pool)
+// Pre-allocate a single byte buffer (lives outside the request hot path)
 const writer = new JsonWriter(512);
 
 server.get('/fast-api', (ctx) => {
-  // Construcción manual de bytes
+  // Construct JSON bytes manually
   writer.reset()
     .objectStart()
       .key('status').string('ok')
@@ -130,19 +130,18 @@ server.get('/fast-api', (ctx) => {
         .arrayEnd()
     .objectEnd();
 
-  // Enviamos el Buffer resultante directamente
+  // Send the constructed raw buffer directly
   ctx.send(writer.toBuffer());
 });
 ```
 
-#### Uso Global (Compiler Pattern)
-Si prefieres usar esquemas, puedes definir un **Serializer Compiler**. Voltrix compilará los esquemas al arranque, eliminando el costo de búsqueda durante las peticiones. Aquí podrías integrar librerías externas si no quieres usar `JsonWriter` manualmente.
+#### Global Serializer Compiler Pattern
+If you prefer schema models, you can define a **Serializer Compiler**. Voltrix will compile these schemas at startup, completely eliminating schema lookups during requests.
 
 ```typescript
 const myCompiler = {
   compile: (schema) => {
-    // Aquí podrías usar JsonWriter para generar una función especializada
-    // o integrar librerías de terceros.
+    // Generate an optimized pre-compiled function (e.g. using JsonWriter or fast-json-stringify)
     return (data) => JSON.stringify(data);
   }
 };
@@ -150,5 +149,8 @@ const myCompiler = {
 server.setSerializerCompiler(myCompiler);
 ```
 
-Este patrón asegura que en el "hot path", Voltrix use directamente la función pre-compilada, acercándose al límite físico de transferencia de datos (Zero-Copy).
+This pattern ensures that during active request processing, Voltrix invokes your compiled schema serialization function directly, approaching the physical limits of network card bandwidth with zero runtime overhead.
 
+## License
+
+MIT

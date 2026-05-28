@@ -1,20 +1,20 @@
 # @voltrix/swagger
 
-Generador automático de documentación **OpenAPI 3.0** y visor embebido (Swagger UI) para **Voltrix**.
+Automatic **OpenAPI 3.0** documentation generator and embedded viewer (Swagger UI) middleware for the **Voltrix** framework.
 
-## ¿Para qué sirve?
+## Features
 
-- Genera de forma dinámica la especificación OpenAPI escaneando el RadixTree de `@voltrix/server` o procesando decoradores de `@voltrix/decorator`.
-- Soporte nativo para inferencia de metadatos (rutas, esquemas, autorizaciones).
-- Incluye el middleware `swaggerUi` listo para exponer la interfaz visual de la documentación sin configuraciones adicionales.
+- **Dynamic Spec Generation**: Scan the `@voltrix/server` `RadixTree` and compile decorative controller metadata from `@voltrix/decorator` directly into valid OpenAPI specifications.
+- **Metadata Inference**: Seamlessly extract route parameters, JSON schema shapes, response status codes, and authorization scopes.
+- **Embedded Swagger UI Middleware**: Serves a highly optimized instance of Swagger UI to present your interactive API documentation interface with zero configuration.
 
-## Instalación
+## Installation
 
 ```bash
 npm install @voltrix/swagger
 ```
 
-## Ejemplo de Uso (Programático)
+## Usage Example (Programmatic API)
 
 ```typescript
 import { createServer } from '@voltrix/server';
@@ -22,18 +22,23 @@ import { generateFromRouter, swaggerUi } from '@voltrix/swagger';
 
 const server = createServer();
 
-// Definimos una ruta con metadata para OpenAPI
+// Define a route with OpenAPI metadata
 server.get('/users', (ctx) => ctx.json([]))
   .meta('openapi', {
-    summary: 'Obtener lista de usuarios',
+    summary: 'Retrieve user list',
     tags: ['Users']
   });
 
-// Generar el documento JSON
-const spec = generateFromRouter(server, { title: 'Mi API Voltrix', version: '1.0.0' });
+// Compile the JSON specification document
+const spec = generateFromRouter(server, { title: 'My Voltrix API', version: '1.0.0' });
 
-// Exponer la UI de Swagger en /docs
+// Mount the Swagger UI viewer middleware at /docs
 server.any('/docs/*', swaggerUi(spec, '/docs'));
 
 await server.listen({ port: 3000 });
+console.log('API Docs available at http://localhost:3000/docs');
 ```
+
+## License
+
+MIT
