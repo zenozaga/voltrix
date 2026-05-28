@@ -64,8 +64,8 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
         pipeline.zadd(rulesKey, rule.pattern.length, `${rule.pattern}:${rule.limit}`);
       }
     }
-    // Register wildcard fallback rule with length 1
-    pipeline.zadd(rulesKey, 1, `*:${this.options.concurrency ?? 1}`);
+    // Register wildcard fallback rule with length 1 (default: -1 / unlimited)
+    pipeline.zadd(rulesKey, 1, `*:-1`);
     await pipeline.exec();
 
     // Initialize Pub/Sub listener for immediate wakeup
@@ -160,14 +160,14 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
 
       try {
         const localActiveCount = this.activeJobs.size;
-        const workerConcurrency = this.options.workerConcurrency ?? 100; // Global worker concurrency cap
+        const globalConcurrency = this.options.concurrency ?? -1;
 
-        if (localActiveCount < workerConcurrency) {
+        if (globalConcurrency === -1 || localActiveCount < globalConcurrency) {
           // Poll Redis for eligible job under group concurrency rules
           const res = await this.redis.voltrixAcquireJobBuffer(
             this.queueName,
             this.workerId,
-            String(this.options.concurrency ?? 1), // default group-level cap
+            '-1', // Default group-level cap is unlimited (-1)
             String(Date.now())
           );
 

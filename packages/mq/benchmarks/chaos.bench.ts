@@ -221,7 +221,6 @@ if (!process.env.ROLE) {
 
     const worker = new Worker('chaos-bench-queue', handler, REDIS_CONFIG, {
       concurrency: 5,
-      workerConcurrency: 5,
       lockDuration: LOCK_DURATION,
       stalledInterval: 1000
     });

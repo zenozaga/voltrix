@@ -48,7 +48,6 @@ describe('@voltrix/mq Integration Tests', () => {
 
       const worker = new Worker(queueName, workerHandler, REDIS_CONFIG, {
         concurrency: 5,
-        workerConcurrency: 5,
         lockDuration: 5000,
       });
 
@@ -123,7 +122,6 @@ describe('@voltrix/mq Integration Tests', () => {
 
       const worker = new Worker(queueName, workerHandler, REDIS_CONFIG, {
         concurrency: 5,
-        workerConcurrency: 5,
         lockDuration: 5000,
       });
       await worker.start();
@@ -182,15 +180,15 @@ describe('@voltrix/mq Integration Tests', () => {
       };
 
       // Set up worker with:
-      // - Fallback concurrency per group = 1
+      // - Fallback concurrency per group = 1 (comodín rule)
       // - Specific rules: 'tenant.heavy.*' gets a cap of 1
-      // - 'tenant.light.*' gets unlimited or fallback (1)
+      // - 'tenant.light.*' gets limit of 5
       const worker = new Worker(queueName, workerHandler, REDIS_CONFIG, {
-        concurrency: 1, // Fallback limit per group
-        workerConcurrency: 10, // Global worker concurrency cap (allows running heavy A and light B in parallel)
+        concurrency: 10, // Global worker concurrency cap
         limitsRules: [
           { pattern: 'tenant.heavy.*', limit: 1 },
-          { pattern: 'tenant.light.*', limit: 5 }, // higher limit
+          { pattern: 'tenant.light.*', limit: 5 },
+          { pattern: '*', limit: 1 }, // Fallback limit per group
         ],
       });
       await worker.start();

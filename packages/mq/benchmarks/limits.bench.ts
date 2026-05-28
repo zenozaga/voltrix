@@ -205,11 +205,11 @@ if (!process.env.ROLE) {
     };
 
     const worker = new Worker('limits-bench-queue', handler, REDIS_CONFIG, {
-      concurrency: 1, // Fallback limit per group
-      workerConcurrency: 20, // Global worker concurrency cap
+      concurrency: 20, // Global worker concurrency cap
       limitsRules: [
         { pattern: 'tenant.heavy.*', limit: 1 },
-        { pattern: 'tenant.light.*', limit: 10 }
+        { pattern: 'tenant.light.*', limit: 10 },
+        { pattern: '*', limit: 1 } // Fallback limit per group
       ]
     });
     await worker.start();

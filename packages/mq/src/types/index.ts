@@ -102,12 +102,11 @@ export interface LimitRule {
 }
 
 export interface WorkerOptions {
-  concurrency?: number;         // Fallback concurrency cap per group if not dynamically defined (Default: 1)
+  concurrency?: number;         // Global concurrency limit for this worker instance (Default: -1 / unlimited)
   limitsRules?: LimitRule[];    // Centralized pattern-based policies registered in Redis at startup
   lockDuration?: number;        // Heartbeat / Lease expiration window in ms (Default: 30000)
   stalledInterval?: number;     // Interval in ms to sweep stalled jobs (Default: 15000)
   sandbox?: string | URL;       // Path to a separate worker thread file for CPU isolation
-  workerConcurrency?: number;   // Global concurrency limit for this worker instance (Default: 100)
 }
 
 export interface WorkerEvents<TData = unknown, TResult = unknown> {

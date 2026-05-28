@@ -135,8 +135,7 @@ if (!process.env.ROLE) {
     };
 
     const worker = new Worker('endurance-bench-queue', handler, REDIS_CONFIG, {
-      concurrency: 10,
-      workerConcurrency: 10
+      concurrency: 10
     });
     await worker.start();
 

@@ -93,11 +93,11 @@ const handler = async (job) => {
 };
 
 const worker = new Worker('reports-queue', handler, REDIS_CONFIG, {
-  concurrency: 1, // Fallback limit per group
-  workerConcurrency: 5, // Global worker concurrency cap
+  concurrency: 5, // Global worker concurrency cap
   limitsRules: [
     { pattern: 'tenant.heavy.*', limit: 1 },
-    { pattern: 'tenant.light.*', limit: 5 }
+    { pattern: 'tenant.light.*', limit: 5 },
+    { pattern: '*', limit: 1 } // Fallback limit per group
   ]
 });
 

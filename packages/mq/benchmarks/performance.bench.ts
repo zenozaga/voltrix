@@ -8,7 +8,7 @@ import { Job } from '../src/core/job.js';
 const __filename = fileURLToPath(import.meta.url);
 const REDIS_CONFIG = { host: '127.0.0.1', port: 6379 };
 const TOTAL_JOBS = 10000; // 10k jobs per mode
-const CONCURRENCY_PER_WORKER = 1250; // 1250 * 4 = 5000 (5k concurrency total)
+const CONCURRENCY_PER_WORKER = 5000; // 5000 * 4 = 20000 (20k concurrency total)
 const NUM_WORKERS = 4;
 
 if (!process.env.ROLE) {
@@ -184,8 +184,7 @@ if (!process.env.ROLE) {
     };
 
     const worker = new Worker('perf-bench-queue', handler, REDIS_CONFIG, {
-      concurrency: CONCURRENCY_PER_WORKER,
-      workerConcurrency: CONCURRENCY_PER_WORKER
+      concurrency: CONCURRENCY_PER_WORKER
     });
     await worker.start();
 
