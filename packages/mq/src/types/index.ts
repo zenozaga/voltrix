@@ -37,7 +37,7 @@ export interface JobOptions {
   uniqueId?: string;          // Deduplication key
   runAt?: number;             // Timestamp to run the job
   delay?: number;             // Delay in ms to wait before running
-  
+
   // Cron / Recurring Options
   cron?: string;              // Standard 5-field cron expression (e.g. '*/5 * * * *')
   cronOptions?: {
@@ -65,7 +65,7 @@ export interface Job<TData = unknown, TResult = unknown> {
   runAt?: number;
   result?: TResult;
   error?: string;
-  
+
   // Traceability metadata
   correlationId?: string;
   transformations?: JobTransformation[];
@@ -94,7 +94,9 @@ export interface GroupMetrics {
   limit: number;              // Current concurrency limit set for this group (-1: unlimited)
 }
 
-export type JobHandler<TData = unknown, TResult = unknown> = (job: Job<TData, TResult>) => Promise<TResult> | TResult;
+export type JobHandler<TData = unknown, TResult = unknown> =
+  | ((job: Job<TData, TResult>) => Promise<TResult> | TResult)
+  | ((jobs: Job<TData, TResult>[]) => Promise<unknown> | unknown);
 
 export interface LimitRule {
   pattern: string;              // Glob pattern matching the groupId (e.g., 'message.qr.*')
@@ -103,6 +105,8 @@ export interface LimitRule {
 
 export interface WorkerOptions {
   concurrency?: number;         // Global concurrency limit for this worker instance (Default: -1 / unlimited)
+  batch?: boolean;              // Enable Batch Worker Mode (Default: false)
+  batchSize?: number;           // Maximum jobs fetched in a single Redis poll (Default: 64 if batch is true, else 1)
   limitsRules?: LimitRule[];    // Centralized pattern-based policies registered in Redis at startup
   lockDuration?: number;        // Heartbeat / Lease expiration window in ms (Default: 30000)
   stalledInterval?: number;     // Interval in ms to sweep stalled jobs (Default: 15000)
@@ -153,6 +157,22 @@ export interface VoltrixRedis extends Redis {
     defaultConcurrency: string,
     now: string
   ): Promise<[Buffer, Buffer, Buffer, Buffer] | null>;
+
+  voltrixAcquireJobsBatch(
+    queueName: string,
+    workerId: string,
+    defaultConcurrency: string,
+    now: string,
+    batchSize: string
+  ): Promise<[string, string, string, string][]>;
+
+  voltrixAcquireJobsBatchBuffer(
+    queueName: string,
+    workerId: string,
+    defaultConcurrency: string,
+    now: string,
+    batchSize: string
+  ): Promise<[Buffer, Buffer, Buffer, Buffer][]>;
 
   voltrixCompleteJob(
     queueName: string,

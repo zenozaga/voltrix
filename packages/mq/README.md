@@ -111,6 +111,49 @@ await worker.start();
 
 ---
 
+## 📦 Batch Operations & Batch Handlers
+
+`@voltrix/mq` supports ultra-high-throughput batch processing at both the database level (pipelining) and application level (batch worker execution):
+
+### 1. Bulk Job Enqueuing (`addBulk`)
+To push thousands of jobs in a single, atomic network flight:
+```ts
+const jobs = [
+  { name: 'generate', data: { id: 1 }, opts: { groupId: 'tenant.heavy' } },
+  { name: 'generate', data: { id: 2 }, opts: { groupId: 'tenant.heavy' } },
+  { name: 'generate', data: { id: 3 }, opts: { groupId: 'tenant.light' } }
+];
+
+const jobIds = await queue.addBulk(jobs);
+console.log(`Enqueued ${jobIds.length} jobs in a single round-trip!`);
+```
+
+### 2. Batch Worker Mode (`batch: true`)
+A Batch Worker pulls a batch of up to `batchSize` (default: `64`) eligible jobs in a single round-trip and forwards the entire array to the handler, enabling batch database inserts, API calls, or bulk processing:
+```ts
+const batchHandler = async (jobs) => {
+  console.log(`Received batch of ${jobs.length} jobs!`);
+  
+  // Bulk processing (e.g. database batch insert)
+  const payloads = jobs.map(j => j.data);
+  await db.insertMany(payloads);
+  
+  // Return values matching jobs array size
+  return jobs.map(() => ({ processed: true }));
+};
+
+const worker = new Worker('reports-queue', batchHandler, REDIS_CONFIG, {
+  batch: true,
+  batchSize: 64, // Process up to 64 jobs at once
+  limitsRules: [
+    { pattern: 'tenant.heavy.*', limit: 5 } // Still strictly respected inside batch acquisition!
+  ]
+});
+await worker.start();
+```
+
+---
+
 ## 🔌 Decorators & Dependency Injection
 
 `@voltrix/mq` integrates seamlessly with `@voltrix/injector` for declarative queue registering and bootstrap injection:

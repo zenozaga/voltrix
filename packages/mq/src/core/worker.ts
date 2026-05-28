@@ -154,6 +154,40 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
     return recovered || [];
   }
 
+  private _parseAcquiredJob(res: [Buffer, Buffer, Buffer, Buffer]): { job: Job; payload: JobPayload; abortController: AbortController } {
+    const [jobIdBuf, groupIdBuf, payloadBuf, jobNameBuf] = res;
+    const jobId = jobIdBuf.toString('utf-8');
+    const groupId = groupIdBuf.toString('utf-8');
+    const jobName = jobNameBuf.toString('utf-8');
+
+    let payload: JobPayload = { data: undefined, maxAttempts: 1 };
+    try {
+      payload = deserializeVbp(payloadBuf);
+    } catch {}
+
+    const abortController = new AbortController();
+    const job = new Job({
+      id: jobId,
+      group: groupId,
+      name: jobName,
+      data: payload.data,
+      state: 'active',
+      attempts: Number(payload.attempts || '0'),
+      maxAttempts: Number(payload.maxAttempts || '1'),
+      stalledCount: 0,
+      progress: 0,
+      timestamp: Date.now(),
+      correlationId: payload.correlationId,
+      transformations: payload.transformations
+    }, this.redis, this.queueName, abortController);
+
+    const lockDuration = this.options.lockDuration ?? 30000;
+    job.lockDuration = lockDuration;
+    job.lastHeartbeatTime = Date.now();
+
+    return { job, payload, abortController };
+  }
+
   private _startPollLoop(): void {
     const loop = async () => {
       if (!this.running) return;
@@ -162,63 +196,65 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
         const localActiveCount = this.activeJobs.size;
         const globalConcurrency = this.options.concurrency ?? -1;
 
+        const isBatchMode = this.options.batch ?? false;
+        const defaultBatchSize = isBatchMode ? 64 : 1;
+        const batchSize = this.options.batchSize ?? defaultBatchSize;
+
         if (globalConcurrency === -1 || localActiveCount < globalConcurrency) {
-          // Poll Redis for eligible job under group concurrency rules
-          const res = await this.redis.voltrixAcquireJobBuffer(
-            this.queueName,
-            this.workerId,
-            '-1', // Default group-level cap is unlimited (-1)
-            String(Date.now())
-          );
+          // Calculate budget
+          const budget = globalConcurrency === -1
+            ? batchSize
+            : Math.min(batchSize, globalConcurrency - localActiveCount);
 
-          if (res) {
-            if (!this.running) return;
-            const [jobIdBuf, groupIdBuf, payloadBuf, jobNameBuf] = res;
-            const jobId = jobIdBuf.toString('utf-8');
-            const groupId = groupIdBuf.toString('utf-8');
-            const jobName = jobNameBuf.toString('utf-8');
+          if (budget > 0) {
+            const batchRes = await this.redis.voltrixAcquireJobsBatchBuffer(
+              this.queueName,
+              this.workerId,
+              '-1', // Default group limit fallback
+              String(Date.now()),
+              String(budget)
+            );
 
-            let payload: JobPayload = { data: undefined, maxAttempts: 1 };
-            try {
-              payload = deserializeVbp(payloadBuf);
-            } catch {}
+            if (batchRes && batchRes.length > 0) {
+              if (!this.running) return;
 
-            const abortController = new AbortController();
-            const job = new Job({
-              id: jobId,
-              group: groupId,
-              name: jobName,
-              data: payload.data,
-              state: 'active',
-              attempts: Number(payload.attempts || '0'),
-              maxAttempts: Number(payload.maxAttempts || '1'),
-              stalledCount: 0,
-              progress: 0,
-              timestamp: Date.now(),
-              correlationId: payload.correlationId,
-              transformations: payload.transformations
-            }, this.redis, this.queueName, abortController);
+              const parsed = batchRes.map(res => this._parseAcquiredJob(res));
+              const jobs = parsed.map(p => p.job);
+              const payloads = parsed.map(p => p.payload);
 
-            const lockDuration = this.options.lockDuration ?? 30000;
-            job.lockDuration = lockDuration;
-            job.lastHeartbeatTime = Date.now();
-
-            // Emit active event
-            this.emit('active', job);
-
-            const promise = this._executeJob(job, payload);
-            this.activeJobs.set(jobId, { job, abortController, promise });
-          } else {
-            // Sleep when no eligible jobs
-            await new Promise<void>((resolve) => {
-              this.wakeUpResolver = resolve;
-              this.pollerTimer = setTimeout(() => {
-                if (this.wakeUpResolver === resolve) {
-                  this.wakeUpResolver = undefined;
-                  resolve();
+              // Register jobs as active
+              if (isBatchMode) {
+                // Emit active event for all jobs
+                for (const job of jobs) {
+                  this.emit('active', job);
                 }
-              }, 1000);
-            });
+
+                const promise = this._executeBatch(jobs, payloads);
+                for (const p of parsed) {
+                  this.activeJobs.set(p.job.id, { job: p.job, abortController: p.abortController, promise });
+                }
+              } else {
+                for (const p of parsed) {
+                  this.emit('active', p.job);
+                  const promise = this._executeJob(p.job, p.payload);
+                  this.activeJobs.set(p.job.id, { job: p.job, abortController: p.abortController, promise });
+                }
+              }
+            } else {
+              // Sleep when no eligible jobs
+              await new Promise<void>((resolve) => {
+                this.wakeUpResolver = resolve;
+                this.pollerTimer = setTimeout(() => {
+                  if (this.wakeUpResolver === resolve) {
+                    this.wakeUpResolver = undefined;
+                    resolve();
+                  }
+                }, 1000);
+              });
+            }
+          } else {
+            // No budget, sleep (unlikely, but safe backup)
+            await new Promise<void>((resolve) => setTimeout(resolve, 100));
           }
         } else {
           // Poller is full, sleep until a slot opens up on job completion
@@ -245,6 +281,208 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
     process.nextTick(loop);
   }
 
+  private async _executeBatch(
+    jobs: Job<unknown, unknown>[],
+    payloads: JobPayload[]
+  ): Promise<void> {
+    const startTime = Date.now();
+    const cpuStart = process.cpuUsage();
+
+    try {
+      const batchHandler = this.handler as (jobs: Job<unknown, unknown>[]) => Promise<unknown> | unknown;
+
+      // Run user batch handler
+      const results = await batchHandler(jobs);
+
+      const activeJobsList: { job: Job<unknown, unknown>; payload: JobPayload }[] = [];
+      for (let i = 0; i < jobs.length; i++) {
+        if (!jobs[i].isAborted()) {
+          activeJobsList.push({ job: jobs[i], payload: payloads[i] });
+        }
+      }
+
+      if (activeJobsList.length === 0) return;
+
+      const durationMs = Date.now() - startTime;
+      const cpuDiff = process.cpuUsage(cpuStart);
+      const now = Date.now();
+
+      const pipeline = this.redis.pipeline() as any;
+
+      for (let i = 0; i < activeJobsList.length; i++) {
+        const { job, payload } = activeJobsList[i];
+        
+        const trace: JobTransformation = {
+          pluginId: 'voltrix:mq',
+          pluginName: 'VoltrixMessageQueue',
+          operation: `process:${job.name}:batch`,
+          timestamp: now,
+          performance: {
+            durationMs,
+            cpuUserSec: cpuDiff.user / 1000000
+          }
+        };
+
+        const updatedTransformations = [...(job.transformations ?? []), trace];
+        job.transformations = updatedTransformations;
+
+        const jobKey = `voltrix:mq:${this.queueName}:job:${job.id}`;
+        const removeOnComplete = payload.removeOnComplete !== false ? 1 : 0;
+
+        if (removeOnComplete === 0) {
+          const completedPayload = serializeVbp({
+            ...payload,
+            transformations: updatedTransformations
+          });
+          const resultVal = Array.isArray(results) ? results[i] : results;
+          
+          pipeline.hset(jobKey, 'payload', completedPayload);
+          pipeline.hset(jobKey, 'result', JSON.stringify(resultVal));
+          pipeline.voltrixCompleteJob(
+            this.queueName,
+            job.id,
+            job.group,
+            '0',
+            String(now)
+          );
+        } else {
+          pipeline.voltrixCompleteJob(
+            this.queueName,
+            job.id,
+            job.group,
+            '1',
+            String(now)
+          );
+        }
+
+        // Cron Recurring Scheduling
+        if (payload.cron) {
+          try {
+            const parser = cronParser.parseExpression(payload.cron, payload.cronOptions);
+            const nextDate = parser.next().toDate();
+            const nextRunAt = nextDate.getTime();
+            const delay = Math.max(0, nextRunAt - Date.now());
+
+            const nextJobId = randomUUID();
+            const nextPayload = JSON.stringify({
+              ...payload,
+              attempts: 0,
+              transformations: updatedTransformations
+            });
+
+            pipeline.voltrixPushJob(
+              this.queueName,
+              nextJobId,
+              job.group,
+              nextPayload,
+              String(nextRunAt),
+              String(delay),
+              job.name,
+              String(payload.maxAttempts ?? 1),
+              payload.backoffType ?? 'linear',
+              String(payload.backoffDelay ?? 1000),
+              payload.uniqueId ?? ''
+            );
+          } catch (cronErr) {
+            const errMsg = cronErr instanceof Error ? cronErr.message : String(cronErr);
+            this.emit('error', new Error(`Cron rescheduling failed for job ${job.id}: ${errMsg}`));
+          }
+        }
+      }
+
+      await pipeline.exec();
+
+      // Broadcast wakeup trigger
+      await this.redis.publish(`voltrix:mq:${this.queueName}:events`, 'waiting');
+
+      for (let i = 0; i < activeJobsList.length; i++) {
+        const { job } = activeJobsList[i];
+        const resultVal = Array.isArray(results) ? results[i] : results;
+        this.emit('completed', job, resultVal);
+      }
+
+    } catch (err) {
+      const activeJobsList: { job: Job<unknown, unknown>; payload: JobPayload }[] = [];
+      for (let i = 0; i < jobs.length; i++) {
+        if (!jobs[i].isAborted()) {
+          activeJobsList.push({ job: jobs[i], payload: payloads[i] });
+        }
+      }
+
+      if (activeJobsList.length === 0) return;
+
+      const durationMs = Date.now() - startTime;
+      const cpuDiff = process.cpuUsage(cpuStart);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = err instanceof Error ? err.stack || err.message : String(err);
+      const now = Date.now();
+
+      const pipeline = this.redis.pipeline() as any;
+
+      for (const { job, payload } of activeJobsList) {
+        const trace: JobTransformation = {
+          pluginId: 'voltrix:mq',
+          pluginName: 'VoltrixMessageQueue',
+          operation: `process:${job.name}:batch:failed`,
+          timestamp: now,
+          metadata: { error: errMsg },
+          performance: {
+            durationMs,
+            cpuUserSec: cpuDiff.user / 1000000
+          }
+        };
+
+        const updatedTransformations = [...(job.transformations ?? []), trace];
+        job.transformations = updatedTransformations;
+
+        const jobKey = `voltrix:mq:${this.queueName}:job:${job.id}`;
+        const removeOnFail = payload.removeOnFail === true ? 1 : 0;
+
+        if (removeOnFail === 0) {
+          const failedPayload = serializeVbp({
+            ...payload,
+            attempts: Number(payload.attempts || 0) + 1,
+            transformations: updatedTransformations
+          });
+          pipeline.hset(jobKey, 'payload', failedPayload);
+          pipeline.voltrixFailJob(
+            this.queueName,
+            job.id,
+            job.group,
+            errorMsg,
+            String(now),
+            '0'
+          );
+        } else {
+          pipeline.voltrixFailJob(
+            this.queueName,
+            job.id,
+            job.group,
+            errorMsg,
+            String(now),
+            '1'
+          );
+        }
+      }
+
+      await pipeline.exec();
+
+      await this.redis.publish(`voltrix:mq:${this.queueName}:events`, 'waiting');
+
+      for (const { job } of activeJobsList) {
+        this.emit('failed', job, err instanceof Error ? err : new Error(errorMsg));
+      }
+    } finally {
+      for (const job of jobs) {
+        this.activeJobs.delete(job.id);
+      }
+      if (this.fullWakeUpResolver) {
+        this.fullWakeUpResolver();
+        this.fullWakeUpResolver = undefined;
+      }
+    }
+  }
+
   private async _executeJob(job: Job<unknown, unknown>, payload: JobPayload): Promise<void> {
     const startTime = Date.now();
     const cpuStart = process.cpuUsage();
@@ -262,7 +500,8 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
       };
 
       // Run user handler
-      const result = await this.handler(job);
+      const singleHandler = this.handler as (job: Job<unknown, unknown>) => Promise<unknown> | unknown;
+      const result = await singleHandler(job);
 
       if (job.isAborted()) {
         // Job was aborted mid-execution, discard completion write to let stalled supervisor recover or fail

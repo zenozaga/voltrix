@@ -124,6 +124,81 @@ end
 return nil
     `
   },
+  acquireJobsBatch: {
+    numberOfKeys: 1,
+    lua: `
+local queueName = KEYS[1]
+local workerId = ARGV[1]
+local defaultConcurrency = tonumber(ARGV[2])
+local now = ARGV[3]
+local batchSize = tonumber(ARGV[4] or "1")
+
+local groupsKey = 'voltrix:mq:' .. queueName .. ':groups'
+local activeKey = 'voltrix:mq:' .. queueName .. ':active_count'
+local heartbeatsKey = 'voltrix:mq:' .. queueName .. ':heartbeats'
+local limitsKey = 'voltrix:mq:' .. queueName .. ':group_limits'
+local globalWaitingKey = 'voltrix:mq:' .. queueName .. ':waiting'
+
+local results = {}
+local acquiredCount = 0
+
+-- 1. TRY FAST-PATH FIRST: Pop up to batchSize jobs from the global queue
+for i = 1, batchSize do
+    local jobId = redis.call('LPOP', globalWaitingKey)
+    if jobId then
+        redis.call('HSET', 'voltrix:mq:' .. queueName .. ':job:' .. jobId, 'state', 'active')
+        redis.call('HSET', heartbeatsKey, jobId, workerId .. ':' .. now)
+        local jobMeta = redis.call('HMGET', 'voltrix:mq:' .. queueName .. ':job:' .. jobId, 'payload', 'name')
+        
+        acquiredCount = acquiredCount + 1
+        results[acquiredCount] = { jobId, "global", jobMeta[1], jobMeta[2] }
+    else
+        break
+    end
+end
+
+-- 2. TRY SLOW-PATH (Fallback): If budget remains, scan limited groups in ZSET
+if acquiredCount < batchSize then
+    local groups = redis.call('ZRANGE', groupsKey, 0, -1)
+    
+    for _, groupId in ipairs(groups) do
+        if acquiredCount >= batchSize then
+            break
+        end
+        
+        local active = tonumber(redis.call('HGET', activeKey, groupId) or "0")
+        local maxLimit = tonumber(redis.call('HGET', limitsKey, groupId) or defaultConcurrency)
+        
+        -- Acquire multiple jobs from this group up to its limit or our remaining batch budget
+        while (maxLimit == -1 or active < maxLimit) and (acquiredCount < batchSize) do
+            local groupQueueKey = 'voltrix:mq:' .. queueName .. ':group:' .. groupId
+            local jobId = redis.call('LPOP', groupQueueKey)
+            
+            if jobId then
+                redis.call('HSET', 'voltrix:mq:' .. queueName .. ':job:' .. jobId, 'state', 'active')
+                redis.call('HINCRBY', activeKey, groupId, 1)
+                active = active + 1
+                redis.call('HSET', heartbeatsKey, jobId, workerId .. ':' .. now)
+                
+                local len = redis.call('LLEN', groupQueueKey)
+                if len == 0 then
+                    redis.call('ZREM', groupsKey, groupId)
+                end
+                
+                local jobMeta = redis.call('HMGET', 'voltrix:mq:' .. queueName .. ':job:' .. jobId, 'payload', 'name')
+                acquiredCount = acquiredCount + 1
+                results[acquiredCount] = { jobId, groupId, jobMeta[1], jobMeta[2] }
+            else
+                redis.call('ZREM', groupsKey, groupId)
+                break
+            end
+        end
+    end
+end
+
+return results
+    `
+  },
   completeJob: {
     numberOfKeys: 1,
     lua: `

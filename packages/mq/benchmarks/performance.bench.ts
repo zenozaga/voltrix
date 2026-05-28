@@ -15,7 +15,7 @@ if (!process.env.ROLE) {
   // ─── COORDINATOR ROLE ───────────────────────────────────────────────────────
   async function runCoordinator() {
     console.log('🏁 Starting Dual-Mode Performance Benchmark (10k Jobs, 5k Concurrency)...');
-    
+
     // 1. Run Pub/Sub Mode
     console.log('\n🔵 Running Mode 1: Pub/Sub (Publish and Consume simultaneously)...');
     const statsPubSub = await runMode('pubsub');
@@ -31,7 +31,7 @@ if (!process.env.ROLE) {
     console.log('\n======================================================');
     console.log('🏎️  PERFORMANCE COMPARISON RESULTS (10k Jobs, 5k Concurrency)');
     console.log('======================================================');
-    
+
     const printRow = (modeName: string, stats: any) => {
       console.log(`📊 Mode: ${modeName}`);
       console.log(`   Total Duration : ${stats.duration.toFixed(2)} seconds`);
@@ -41,11 +41,11 @@ if (!process.env.ROLE) {
 
     printRow('PUB/SUB (Simultaneous)', statsPubSub);
     printRow('REPLAY (Queue Spooling)', statsReplay);
-    
+
     const ratio = (statsReplay.throughput / statsPubSub.throughput).toFixed(2);
     console.log(`💡 Replay Mode is ${ratio}x as fast as Pub/Sub Mode.`);
     console.log('======================================================\n');
-    
+
     process.exit(0);
   }
 
@@ -67,10 +67,10 @@ if (!process.env.ROLE) {
       const cleanup = async () => {
         if (interval) clearInterval(interval);
         if (producer) {
-          try { producer.kill(); } catch {}
+          try { producer.kill(); } catch { }
         }
         for (const w of workers) {
-          try { w.kill(); } catch {}
+          try { w.kill(); } catch { }
         }
         await monitorRedis.quit();
         await redis.quit();
@@ -127,7 +127,7 @@ if (!process.env.ROLE) {
 
       if (mode === 'pubsub') {
         spawnWorkers();
-        
+
         const checkReady = setInterval(() => {
           if (readyWorkers === NUM_WORKERS) {
             clearInterval(checkReady);

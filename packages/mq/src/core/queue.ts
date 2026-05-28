@@ -97,6 +97,90 @@ export class Queue extends TypedEventEmitter<QueueEvents> {
     return jobId;
   }
 
+  async addBulk(
+    jobs: Array<{ name: string; data: unknown; opts?: JobOptions & { groupId?: string; jobId?: string } }>
+  ): Promise<string[]> {
+    const pipeline = this.redis.pipeline() as any;
+    const jobIds: string[] = [];
+    let hasImmediate = false;
+
+    for (const job of jobs) {
+      const opts = job.opts || {};
+      const jobId = opts.jobId ?? randomUUID();
+      jobIds.push(jobId);
+
+      const groupId = opts.groupId ?? 'default';
+
+      if (opts.uniqueId) {
+        const lockKey = `voltrix:mq:${this.name}:unique:${opts.uniqueId}`;
+        const delayVal = opts.backoff?.delay ?? (opts.runAt ? Math.max(0, opts.runAt - Date.now()) : 0);
+        pipeline.set(lockKey, jobId, 'PX', delayVal ? delayVal + 30000 : 30000, 'NX');
+      }
+
+      const score = opts.runAt ?? (opts.backoff?.delay ? Date.now() + opts.backoff.delay : Date.now());
+      const delay = opts.backoff?.delay ?? (opts.runAt ? Math.max(0, opts.runAt - Date.now()) : 0);
+
+      if (delay <= 0) {
+        hasImmediate = true;
+      }
+
+      const correlationId = opts.correlationId ?? randomUUID();
+      const transformations = opts.transformations ?? [];
+
+      const payload = serializeVbp({
+        data: job.data,
+        attempts: 0,
+        maxAttempts: opts.attempts ?? 1,
+        backoffType: opts.backoff?.type ?? 'linear',
+        backoffDelay: opts.backoff?.delay ?? 1000,
+        uniqueId: opts.uniqueId,
+        removeOnComplete: opts.removeOnComplete,
+        removeOnFail: opts.removeOnFail,
+        cron: opts.cron,
+        cronOptions: opts.cronOptions,
+        correlationId,
+        transformations
+      });
+
+      pipeline.voltrixPushJob(
+        this.name,
+        jobId,
+        groupId,
+        payload,
+        String(score),
+        String(delay),
+        job.name,
+        String(opts.attempts ?? 1),
+        opts.backoff?.type ?? 'linear',
+        String(opts.backoff?.delay ?? 1000),
+        opts.uniqueId ?? ''
+      );
+    }
+
+    await pipeline.exec();
+
+    // Fire local events
+    for (let i = 0; i < jobs.length; i++) {
+      const job = jobs[i];
+      const opts = job.opts || {};
+      const jobId = jobIds[i];
+      const delay = opts.backoff?.delay ?? (opts.runAt ? Math.max(0, opts.runAt - Date.now()) : 0);
+      const score = opts.runAt ?? (opts.backoff?.delay ? Date.now() + opts.backoff.delay : Date.now());
+
+      if (delay > 0) {
+        this.emit('delayed', jobId, score);
+      } else {
+        this.emit('waiting', jobId, opts.groupId ?? 'default');
+      }
+    }
+
+    if (hasImmediate) {
+      await this.redis.publish(`voltrix:mq:${this.name}:events`, 'waiting');
+    }
+
+    return jobIds;
+  }
+
   async getJob(jobId: string): Promise<Job | null> {
     const jobKey = `voltrix:mq:${this.name}:job:${jobId}`;
     const hash = await this.redis.hgetallBuffer(jobKey);

@@ -581,4 +581,103 @@ describe('@voltrix/mq Integration Tests', () => {
       await worker.shutdown(1000);
     });
   });
+
+  // ─── 7. Batch Mode & Bulk Operations ──────────────────────────────────────────
+  describe('Batch Mode & Bulk Operations', () => {
+    it('should push multiple jobs in bulk via addBulk and process them as a batch', async () => {
+      const queueName = 'test-queue-batch-bulk';
+      const queue = new Queue(queueName, REDIS_CONFIG);
+      await queue.connect();
+
+      const processedBatches: any[][] = [];
+      const workerHandler = async (jobs: any[]) => {
+        processedBatches.push(jobs.map(j => j.data));
+        return jobs.map(() => ({ ok: true }));
+      };
+
+      const worker = new Worker(queueName, workerHandler, REDIS_CONFIG, {
+        batch: true,
+        batchSize: 10,
+        concurrency: 20
+      });
+      await worker.start();
+
+      const jobsToPush = [
+        { name: 'task-1', data: { id: 1 } },
+        { name: 'task-2', data: { id: 2 } },
+        { name: 'task-3', data: { id: 3 } },
+        { name: 'task-4', data: { id: 4 } },
+        { name: 'task-5', data: { id: 5 } }
+      ];
+
+      const jobIds = await queue.addBulk(jobsToPush);
+      expect(jobIds).toHaveLength(5);
+
+      await new Promise<void>((resolve) => {
+        const check = setInterval(() => {
+          if (processedBatches.length > 0) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 50);
+      });
+
+      expect(processedBatches).toHaveLength(1);
+      expect(processedBatches[0]).toHaveLength(5);
+      expect(processedBatches[0]).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }]);
+
+      const metrics = await queue.getMetrics();
+      expect(metrics.active).toBe(0);
+      expect(metrics.waiting).toBe(0);
+
+      await queue.close();
+      await worker.shutdown(1000);
+    });
+
+    it('should respect group limits in batch acquisition', async () => {
+      const queueName = 'test-queue-batch-limits';
+      const queue = new Queue(queueName, REDIS_CONFIG);
+      await queue.connect();
+
+      const processedBatches: any[][] = [];
+      const workerHandler = async (jobs: any[]) => {
+        processedBatches.push(jobs.map(j => j.id));
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return jobs.map(() => ({ ok: true }));
+      };
+
+      const worker = new Worker(queueName, workerHandler, REDIS_CONFIG, {
+        batch: true,
+        batchSize: 10,
+        limitsRules: [
+          { pattern: 'tenant.heavy.*', limit: 1 }
+        ]
+      });
+      await worker.start();
+
+      const jobsToPush = [
+        { name: 'task-1', data: { val: 1 }, opts: { groupId: 'tenant.heavy.alpha' } },
+        { name: 'task-2', data: { val: 2 }, opts: { groupId: 'tenant.heavy.alpha' } },
+        { name: 'task-3', data: { val: 3 }, opts: { groupId: 'tenant.heavy.alpha' } },
+        { name: 'task-4', data: { val: 4 }, opts: { groupId: 'tenant.heavy.alpha' } },
+        { name: 'task-5', data: { val: 5 }, opts: { groupId: 'tenant.heavy.alpha' } }
+      ];
+
+      await queue.addBulk(jobsToPush);
+
+      await new Promise<void>((resolve) => {
+        const check = setInterval(() => {
+          if (processedBatches.length > 0) {
+            clearInterval(check);
+            resolve();
+          }
+        }, 50);
+      });
+
+      expect(processedBatches[0]).toHaveLength(1);
+
+      await queue.close();
+      await worker.shutdown(1000);
+    });
+  });
 });
