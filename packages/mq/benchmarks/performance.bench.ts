@@ -7,49 +7,66 @@ import { Job } from '../src/core/job.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const REDIS_CONFIG = { host: '127.0.0.1', port: 6379 };
-const TOTAL_JOBS = 10000; // 10k jobs per mode
-const CONCURRENCY_PER_WORKER = 5000; // 5000 * 4 = 20000 (20k concurrency total)
+const TOTAL_JOBS = 10000; // 10k jobs per configuration
+const CONCURRENCY_PER_WORKER = 5000; // 5000 * 4 = 20000 concurrency total
 const NUM_WORKERS = 4;
 
 if (!process.env.ROLE) {
   // ─── COORDINATOR ROLE ───────────────────────────────────────────────────────
   async function runCoordinator() {
-    console.log('🏁 Starting Dual-Mode Performance Benchmark (10k Jobs, 5k Concurrency)...');
+    console.log('🏁 Starting Matrix Performance Benchmark (10k Jobs, 5k Concurrency)...');
 
-    // 1. Run Pub/Sub Mode
-    console.log('\n🔵 Running Mode 1: Pub/Sub (Publish and Consume simultaneously)...');
-    const statsPubSub = await runMode('pubsub');
+    const results: any[] = [];
 
-    // Wait a brief moment for Redis to cool down
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    // Run the 4 configurations sequentially
+    const configs = [
+      { prodMode: 'single', workerMode: 'single', name: 'Single Enqueue ➔ Single Worker (Baseline)' },
+      { prodMode: 'bulk', workerMode: 'single', name: 'Bulk Enqueue ➔ Single Worker' },
+      { prodMode: 'single', workerMode: 'batch', name: 'Single Enqueue ➔ Batch Worker' },
+      { prodMode: 'bulk', workerMode: 'batch', name: 'Bulk Enqueue ➔ Batch Worker (Optimal)' }
+    ];
 
-    // 2. Run Replay Mode
-    console.log('\n🔴 Running Mode 2: Replay (Publish all first, then Consume)...');
-    const statsReplay = await runMode('replay');
+    for (const config of configs) {
+      console.log(`\n------------------------------------------------------`);
+      console.log(`🚀 Running: ${config.name}`);
+      console.log(`------------------------------------------------------`);
+      
+      const stats = await runConfig(config.prodMode as any, config.workerMode as any);
+      results.push({ ...config, ...stats });
+      
+      // Wait to cool down Redis and connection pool
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
 
-    // 3. Display Comparison
-    console.log('\n======================================================');
-    console.log('🏎️  PERFORMANCE COMPARISON RESULTS (10k Jobs, 5k Concurrency)');
-    console.log('======================================================');
-
-    const printRow = (modeName: string, stats: any) => {
-      console.log(`📊 Mode: ${modeName}`);
-      console.log(`   Total Duration : ${stats.duration.toFixed(2)} seconds`);
-      console.log(`   Throughput Rate: ${stats.throughput} jobs/sec`);
-      console.log('------------------------------------------------------');
-    };
-
-    printRow('PUB/SUB (Simultaneous)', statsPubSub);
-    printRow('REPLAY (Queue Spooling)', statsReplay);
-
-    const ratio = (statsReplay.throughput / statsPubSub.throughput).toFixed(2);
-    console.log(`💡 Replay Mode is ${ratio}x as fast as Pub/Sub Mode.`);
-    console.log('======================================================\n');
+    // Print final beautiful matrix table
+    console.log('\n===================================================================================================');
+    console.log('🏎️  MATRIX PERFORMANCE RESULTS (10k Jobs, 5k Concurrency)');
+    console.log('===================================================================================================');
+    console.log(
+      String('Scenario').padEnd(46) + ' | ' +
+      String('Produce T (s)').padStart(13) + ' | ' +
+      String('Produce Rate').padStart(14) + ' | ' +
+      String('Consume T (s)').padStart(13) + ' | ' +
+      String('Consume Rate').padStart(14)
+    );
+    console.log('-'.repeat(110));
+    for (const r of results) {
+      const prodRate = `${(TOTAL_JOBS / r.prodDuration).toFixed(0)} j/s`;
+      const consRate = `${(TOTAL_JOBS / r.consDuration).toFixed(0)} j/s`;
+      console.log(
+        r.name.padEnd(46) + ' | ' +
+        r.prodDuration.toFixed(3).padStart(13) + ' | ' +
+        prodRate.padStart(14) + ' | ' +
+        r.consDuration.toFixed(3).padStart(13) + ' | ' +
+        consRate.padStart(14)
+      );
+    }
+    console.log('===================================================================================================\n');
 
     process.exit(0);
   }
 
-  async function runMode(mode: 'pubsub' | 'replay') {
+  async function runConfig(prodMode: 'single' | 'bulk', workerMode: 'single' | 'batch') {
     const redis = new Redis(REDIS_CONFIG);
     await redis.flushdb();
 
@@ -57,11 +74,13 @@ if (!process.env.ROLE) {
     let readyWorkers = 0;
     let producer: any = null;
 
-    const promise = new Promise<{ duration: number; throughput: number }>(async (resolve, reject) => {
+    const promise = new Promise<{ prodDuration: number; consDuration: number }>(async (resolve, reject) => {
       const monitorRedis = new Redis(REDIS_CONFIG);
       const queue = new Queue('perf-bench-queue', monitorRedis);
 
-      let startTime = 0;
+      let prodStartTime = 0;
+      let prodEndTime = 0;
+      let consStartTime = 0;
       let interval: NodeJS.Timeout | undefined;
 
       const cleanup = async () => {
@@ -77,40 +96,43 @@ if (!process.env.ROLE) {
       };
 
       const safetyTimeout = setTimeout(async () => {
-        console.log(`\n🚨 SAFETY TIMEOUT EXCEEDED in ${mode} mode!`);
+        console.log(`\n🚨 SAFETY TIMEOUT EXCEEDED in ${prodMode} / ${workerMode} mode!`);
         await cleanup();
         reject(new Error('Timeout'));
-      }, 45000);
+      }, 60000);
 
       const checkProgress = async () => {
         try {
           const metrics = await queue.getMetrics();
           const processed = metrics.completed + metrics.failed;
           const pct = ((processed / TOTAL_JOBS) * 100).toFixed(1);
-          console.log(`   [${mode.toUpperCase()}] Progress: ${processed}/${TOTAL_JOBS} jobs (${pct}%) — Active: ${metrics.active}`);
+          console.log(`   [CONSUMING] Progress: ${processed}/${TOTAL_JOBS} jobs (${pct}%) — Active: ${metrics.active}`);
 
           if (processed >= TOTAL_JOBS) {
             clearTimeout(safetyTimeout);
-            const duration = (Date.now() - startTime) / 1000;
-            const throughput = Number((TOTAL_JOBS / duration).toFixed(0));
+            const consDuration = (Date.now() - consStartTime) / 1000;
+            const prodDuration = (prodEndTime - prodStartTime) / 1000;
             await cleanup();
-            resolve({ duration, throughput });
+            resolve({ prodDuration, consDuration });
           }
         } catch (err) {
-          // Ignore transient connection errors during shutdown
+          // Ignore connection closure errors
         }
       };
 
       const spawnProducer = () => {
-        producer = fork(__filename, [], { env: { ...process.env, ROLE: 'producer', MODE: mode } });
+        prodStartTime = Date.now();
+        producer = fork(__filename, [], {
+          env: { ...process.env, ROLE: 'producer', PRODUCER_MODE: prodMode }
+        });
         return producer;
       };
 
       const spawnWorkers = () => {
-        startTime = Date.now();
+        consStartTime = Date.now();
         for (let i = 0; i < NUM_WORKERS; i++) {
           const worker = fork(__filename, [], {
-            env: { ...process.env, ROLE: 'consumer', MODE: mode, WORKER_INDEX: String(i) }
+            env: { ...process.env, ROLE: 'consumer', WORKER_MODE: workerMode, WORKER_INDEX: String(i) }
           });
           workers.push(worker);
 
@@ -118,32 +140,24 @@ if (!process.env.ROLE) {
             if (msg.ready) {
               readyWorkers++;
               if (readyWorkers === NUM_WORKERS) {
-                interval = setInterval(checkProgress, 250);
+                interval = setInterval(checkProgress, 100);
               }
             }
           });
         }
       };
 
-      if (mode === 'pubsub') {
-        spawnWorkers();
-
-        const checkReady = setInterval(() => {
-          if (readyWorkers === NUM_WORKERS) {
-            clearInterval(checkReady);
-            spawnProducer();
-          }
-        }, 20);
-      } else {
-        console.log('   Enqueuing all 10k jobs to Redis first...');
-        const p = spawnProducer();
-        p.on('message', (msg: any) => {
-          if (msg.done) {
-            console.log('   All jobs enqueued. Starting consumer workers...');
-            spawnWorkers();
-          }
-        });
-      }
+      console.log(`   [PRODUCING] Enqueuing 10k jobs using ${prodMode} mode...`);
+      const p = spawnProducer();
+      p.on('message', (msg: any) => {
+        if (msg.done) {
+          prodEndTime = Date.now();
+          const prodDur = (prodEndTime - prodStartTime) / 1000;
+          console.log(`   [PRODUCING] Enqueued 10k jobs in ${prodDur.toFixed(3)}s (${(TOTAL_JOBS / prodDur).toFixed(0)} j/s).`);
+          console.log('   [CONSUMING] Starting consumer workers...');
+          spawnWorkers();
+        }
+      });
     });
 
     return promise;
@@ -156,17 +170,35 @@ if (!process.env.ROLE) {
     const queue = new Queue('perf-bench-queue', REDIS_CONFIG);
     await queue.connect();
 
+    const mode = process.env.PRODUCER_MODE || 'single';
     const batchSize = 1000;
-    for (let i = 0; i < TOTAL_JOBS; i += batchSize) {
-      const promises: Promise<string>[] = [];
-      for (let j = 0; j < batchSize && (i + j) < TOTAL_JOBS; j++) {
-        const jobId = i + j;
-        const tenant = `tenant-${jobId % 5}`;
-        promises.push(
-          queue.add(`task-${jobId}`, { num: jobId }, { groupId: tenant, removeOnComplete: false })
-        );
+
+    if (mode === 'bulk') {
+      for (let i = 0; i < TOTAL_JOBS; i += batchSize) {
+        const jobsToPush = [];
+        for (let j = 0; j < batchSize && (i + j) < TOTAL_JOBS; j++) {
+          const jobId = i + j;
+          const tenant = `tenant-${jobId % 5}`;
+          jobsToPush.push({
+            name: `task-${jobId}`,
+            data: { num: jobId },
+            opts: { groupId: tenant, removeOnComplete: false }
+          });
+        }
+        await queue.addBulk(jobsToPush);
       }
-      await Promise.all(promises);
+    } else {
+      for (let i = 0; i < TOTAL_JOBS; i += batchSize) {
+        const promises: Promise<string>[] = [];
+        for (let j = 0; j < batchSize && (i + j) < TOTAL_JOBS; j++) {
+          const jobId = i + j;
+          const tenant = `tenant-${jobId % 5}`;
+          promises.push(
+            queue.add(`task-${jobId}`, { num: jobId }, { groupId: tenant, removeOnComplete: false })
+          );
+        }
+        await Promise.all(promises);
+      }
     }
 
     await queue.close();
@@ -177,14 +209,20 @@ if (!process.env.ROLE) {
 } else if (process.env.ROLE === 'consumer') {
   // ─── CONSUMER ROLE ──────────────────────────────────────────────────────────
   async function runConsumer() {
-    const handler = async (job: Job) => {
+    const handler = async (jobsOrJob: any) => {
       // Simulate light async process
       await new Promise((resolve) => setTimeout(resolve, 1));
+      if (Array.isArray(jobsOrJob)) {
+        return jobsOrJob.map(() => ({ ok: true }));
+      }
       return { ok: true };
     };
 
+    const isBatch = process.env.WORKER_MODE === 'batch';
     const worker = new Worker('perf-bench-queue', handler, REDIS_CONFIG, {
-      concurrency: CONCURRENCY_PER_WORKER
+      concurrency: CONCURRENCY_PER_WORKER,
+      batch: isBatch,
+      batchSize: isBatch ? 64 : 1
     });
     await worker.start();
 
