@@ -1,6 +1,6 @@
 {
   "name": "@voltrix/server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Ultra-fast standalone HTTP server core — unified context, pre-classified hooks, radix tree routing, plugin system",
   "type": "module",
   "main": "dist/index.js",

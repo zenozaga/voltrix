@@ -1,5 +1,12 @@
 # @voltrix/server
 
+## 0.2.1
+
+### Patch Changes
+
+- 288e1f2: Translate and update all package documentation and README.md files to
+  English to reflect their actual functionalities and public APIs.
+
 ## 0.2.0
 
 ### Minor Changes
