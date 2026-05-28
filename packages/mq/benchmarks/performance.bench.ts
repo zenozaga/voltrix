@@ -8,13 +8,13 @@ import { Job } from '../src/core/job.js';
 const __filename = fileURLToPath(import.meta.url);
 const REDIS_CONFIG = { host: '127.0.0.1', port: 6379 };
 const TOTAL_JOBS = 10000; // 10k jobs per mode
-const CONCURRENCY_PER_WORKER = 250; // 250 * 4 = 1000 (1k concurrency total)
+const CONCURRENCY_PER_WORKER = 1250; // 1250 * 4 = 5000 (5k concurrency total)
 const NUM_WORKERS = 4;
 
 if (!process.env.ROLE) {
   // ─── COORDINATOR ROLE ───────────────────────────────────────────────────────
   async function runCoordinator() {
-    console.log('🏁 Starting Dual-Mode Performance Benchmark (10k Jobs, 1k Concurrency)...');
+    console.log('🏁 Starting Dual-Mode Performance Benchmark (10k Jobs, 5k Concurrency)...');
     
     // 1. Run Pub/Sub Mode
     console.log('\n🔵 Running Mode 1: Pub/Sub (Publish and Consume simultaneously)...');
@@ -29,7 +29,7 @@ if (!process.env.ROLE) {
 
     // 3. Display Comparison
     console.log('\n======================================================');
-    console.log('🏎️  PERFORMANCE COMPARISON RESULTS (10k Jobs, 1k Concurrency)');
+    console.log('🏎️  PERFORMANCE COMPARISON RESULTS (10k Jobs, 5k Concurrency)');
     console.log('======================================================');
     
     const printRow = (modeName: string, stats: any) => {
