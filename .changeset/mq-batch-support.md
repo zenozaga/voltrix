@@ -1,5 +1,12 @@
 ---
 "@voltrix/mq": minor
+"@voltrix/core": minor
+"@voltrix/server": minor
+"@voltrix/events": minor
+"@voltrix/express": minor
+"@voltrix/decorator": minor
+"@voltrix/injector": minor
+"@voltrix/swagger": minor
 ---
 
 Implement high-performance batching and bulk operations support:
