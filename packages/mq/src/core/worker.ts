@@ -286,24 +286,42 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
       const updatedTransformations = [...(job.transformations ?? []), trace];
       job.transformations = updatedTransformations;
 
-      // Update payload in Redis to save transformations trace
+      // Complete job operation - skip updating hash fields if the job is going to be deleted immediately
       const jobKey = `voltrix:mq:${this.queueName}:job:${job.id}`;
-      const completedPayload = serializeVbp({
-        ...payload,
-        transformations: updatedTransformations
-      });
-      await this.redis.hset(jobKey, 'payload', completedPayload);
-      await this.redis.hset(jobKey, 'result', JSON.stringify(result));
-
-      // Complete job atomic operation
       const removeOnComplete = payload.removeOnComplete !== false ? 1 : 0;
-      await this.redis.voltrixCompleteJob(
-        this.queueName,
-        job.id,
-        job.group,
-        String(removeOnComplete),
-        String(Date.now())
-      );
+
+      if (removeOnComplete === 0) {
+        const completedPayload = serializeVbp({
+          ...payload,
+          transformations: updatedTransformations
+        });
+        
+        // Single pipelined network round-trip for all updates
+        const pipeline = this.redis.pipeline() as unknown as {
+          hset(key: string, field: string, value: string | Buffer): void;
+          voltrixCompleteJob(queueName: string, jobId: string, groupId: string, removeOnComplete: string, now: string): void;
+          exec(): Promise<unknown>;
+        };
+        pipeline.hset(jobKey, 'payload', completedPayload);
+        pipeline.hset(jobKey, 'result', JSON.stringify(result));
+        pipeline.voltrixCompleteJob(
+          this.queueName,
+          job.id,
+          job.group,
+          '0',
+          String(Date.now())
+        );
+        await pipeline.exec();
+      } else {
+        // High-performance direct delete (saves 2 writes and 2 network round-trips!)
+        await this.redis.voltrixCompleteJob(
+          this.queueName,
+          job.id,
+          job.group,
+          '1',
+          String(Date.now())
+        );
+      }
 
       // Broadcast wakeup trigger on job completion so that any sleeping pollers can immediately acquire next jobs
       await this.redis.publish(`voltrix:mq:${this.queueName}:events`, 'waiting');
@@ -370,26 +388,44 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
 
       const errorMsg = err instanceof Error ? err.stack || err.message : String(err);
       
-      // Update payload in Redis to save transformations trace
+      // Fail job operation - skip updating hash fields if the job is going to be deleted immediately
       const jobKey = `voltrix:mq:${this.queueName}:job:${job.id}`;
-      const failedPayload = serializeVbp({
-        ...payload,
-        attempts: Number(payload.attempts || 0) + 1,
-        transformations: updatedTransformations
-      });
-      await this.redis.hset(jobKey, 'payload', failedPayload);
-
       const removeOnFail = payload.removeOnFail === true ? 1 : 0;
-      
-      // Fail job atomic operation (handles backoffs, retries, and DLQ)
-      await this.redis.voltrixFailJob(
-        this.queueName,
-        job.id,
-        job.group,
-        errorMsg,
-        String(Date.now()),
-        String(removeOnFail)
-      );
+
+      if (removeOnFail === 0) {
+        const failedPayload = serializeVbp({
+          ...payload,
+          attempts: Number(payload.attempts || 0) + 1,
+          transformations: updatedTransformations
+        });
+        
+        // Single pipelined network round-trip for all updates
+        const pipeline = this.redis.pipeline() as unknown as {
+          hset(key: string, field: string, value: string | Buffer): void;
+          voltrixFailJob(queueName: string, jobId: string, groupId: string, errorMsg: string, now: string, removeOnFail: string): void;
+          exec(): Promise<unknown>;
+        };
+        pipeline.hset(jobKey, 'payload', failedPayload);
+        pipeline.voltrixFailJob(
+          this.queueName,
+          job.id,
+          job.group,
+          errorMsg,
+          String(Date.now()),
+          '0'
+        );
+        await pipeline.exec();
+      } else {
+        // High-performance direct fail/delete
+        await this.redis.voltrixFailJob(
+          this.queueName,
+          job.id,
+          job.group,
+          errorMsg,
+          String(Date.now()),
+          '1'
+        );
+      }
 
       // Broadcast wakeup trigger on job failure so that any sleeping pollers can immediately acquire next jobs
       await this.redis.publish(`voltrix:mq:${this.queueName}:events`, 'waiting');
