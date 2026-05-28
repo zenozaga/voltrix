@@ -1,8 +1,9 @@
 import { Metadata } from '@voltrix/core';
 import { Inject, DIContainer } from '@voltrix/injector';
-import type { WorkerOptions } from '../types/index.js';
+import type { WorkerOptions, Job as IJob } from '../types/index.js';
 import { Queue } from '../core/queue.js';
 import { Worker } from '../core/worker.js';
+import type { Redis, RedisOptions } from 'ioredis';
 
 const processorMeta = Metadata.prefix('voltrix:mq:processor');
 const processMeta = Metadata.prefix('voltrix:mq:process_handlers');
@@ -23,9 +24,9 @@ export function QueueProcessor(options: WorkerOptions & { name: string }) {
  * 🏷️ Process decorator for method handlers inside QueueProcessor classes
  */
 export function Process(name?: string) {
-  return function (target: any, propertyKey: string | symbol) {
+  return function (target: object, propertyKey: string | symbol) {
     const ctor = target.constructor;
-    const handlers = processMeta.get(ctor) || {};
+    const handlers = (processMeta.get(ctor) || {}) as Record<string | symbol, string>;
     handlers[propertyKey] = name ?? '';
     processMeta.set(ctor, undefined, handlers);
   };
@@ -43,8 +44,8 @@ export function InjectQueue(queueName: string) {
  */
 export function LimitRule(pattern: string, limit: number) {
   return function (target: Function) {
-    const rules = limitRulesMeta.get(target) || [];
-    rules.push({ pattern, limit });
+    const rules = (limitRulesMeta.get(target) || {}) as Record<string, number>;
+    rules[pattern] = limit;
     limitRulesMeta.set(target, undefined, rules);
   };
 }
@@ -58,16 +59,20 @@ export class QueueDiscovery {
   /**
    * Scan and start all decorated Workers, and register Queues in the DI container.
    */
-  static async bootstrap(container: DIContainer, redisConfig: any): Promise<void> {
+  static async bootstrap(container: DIContainer, redisConfig: RedisOptions | Redis): Promise<void> {
     const classes = Metadata.getTrackedClasses();
 
     for (const cls of classes) {
-      const processorOpts = processorMeta.get(cls);
+      const processorOpts = processorMeta.get(cls) as (WorkerOptions & { name: string }) | undefined;
       if (!processorOpts || !processorOpts.name) continue;
 
       // Merge stacked @LimitRule decorator rules
       const limitsRules = processorOpts.limitsRules || [];
-      const decoratorRules = limitRulesMeta.get(cls) || [];
+      const decoratorRulesObj = (limitRulesMeta.get(cls) || {}) as Record<string, number>;
+      const decoratorRules = Object.entries(decoratorRulesObj).map(([pattern, limit]) => ({
+        pattern,
+        limit
+      }));
       processorOpts.limitsRules = [...limitsRules, ...decoratorRules];
 
       const queueName = processorOpts.name;
@@ -89,12 +94,12 @@ export class QueueDiscovery {
       }
 
       const processorInstance = container.resolve(cls);
-      const handlers = processMeta.get(cls) || {};
+      const handlers = (processMeta.get(cls) || {}) as Record<string | symbol, string>;
 
       // 3. Create execution handler mapping job names to decorated methods
-      const jobHandler = async (job: any) => {
-        let methodKey: string | undefined;
-        let fallbackKey: string | undefined;
+      const jobHandler = async (job: IJob<unknown, unknown>) => {
+        let methodKey: string | symbol | undefined;
+        let fallbackKey: string | symbol | undefined;
 
         for (const [key, name] of Object.entries(handlers)) {
           if (name === job.name) {
@@ -111,7 +116,11 @@ export class QueueDiscovery {
           throw new Error(`No process handler defined for job name: ${job.name}`);
         }
 
-        return (processorInstance as any)[targetKey](job);
+        const handlerFn = (processorInstance as Record<string | symbol, (j: IJob<unknown, unknown>) => Promise<unknown> | unknown>)[targetKey];
+        if (typeof handlerFn !== 'function') {
+          throw new Error(`Handler is not a function: ${String(targetKey)}`);
+        }
+        return handlerFn(job);
       };
 
       // 4. Start Worker

@@ -1,7 +1,7 @@
 import type { Redis } from 'ioredis';
 import type { Job as IJob, JobTransformation } from '../types/index.js';
 
-export class Job<TData = any, TResult = any> implements IJob<TData, TResult> {
+export class Job<TData = unknown, TResult = unknown> implements IJob<TData, TResult> {
   public id: string;
   public group: string;
   public name: string;

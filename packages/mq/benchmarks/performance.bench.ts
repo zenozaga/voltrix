@@ -7,98 +7,146 @@ import { Job } from '../src/core/job.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const REDIS_CONFIG = { host: '127.0.0.1', port: 6379 };
-const TOTAL_JOBS = 100000;
-const CONCURRENCY_PER_WORKER = 5;
+const TOTAL_JOBS = 10000; // 10k jobs per mode
+const CONCURRENCY_PER_WORKER = 250; // 250 * 4 = 1000 (1k concurrency total)
 const NUM_WORKERS = 4;
 
 if (!process.env.ROLE) {
   // ─── COORDINATOR ROLE ───────────────────────────────────────────────────────
   async function runCoordinator() {
-    console.log('🏁 Starting Performance Benchmark...');
-    const redis = new Redis(REDIS_CONFIG);
-    await redis.flushdb();
-    await redis.quit();
+    console.log('🏁 Starting Dual-Mode Performance Benchmark (10k Jobs, 1k Concurrency)...');
+    
+    // 1. Run Pub/Sub Mode
+    console.log('\n🔵 Running Mode 1: Pub/Sub (Publish and Consume simultaneously)...');
+    const statsPubSub = await runMode('pubsub');
 
-    let readyWorkers = 0;
-    const workers: any[] = [];
-    let producer: any = null;
+    // Wait a brief moment for Redis to cool down
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    const startTime = Date.now();
-    let producerDone = false;
+    // 2. Run Replay Mode
+    console.log('\n🔴 Running Mode 2: Replay (Publish all first, then Consume)...');
+    const statsReplay = await runMode('replay');
 
-    // Helper to spawn processes
-    const spawnProcess = (role: string, index?: number) => {
-      const child = fork(__filename, [], {
-        env: { ...process.env, ROLE: role, WORKER_INDEX: String(index ?? 0) }
-      });
-      return child;
+    // 3. Display Comparison
+    console.log('\n======================================================');
+    console.log('🏎️  PERFORMANCE COMPARISON RESULTS (10k Jobs, 1k Concurrency)');
+    console.log('======================================================');
+    
+    const printRow = (modeName: string, stats: any) => {
+      console.log(`📊 Mode: ${modeName}`);
+      console.log(`   Total Duration : ${stats.duration.toFixed(2)} seconds`);
+      console.log(`   Throughput Rate: ${stats.throughput} jobs/sec`);
+      console.log('------------------------------------------------------');
     };
 
-    // Spawn Workers
-    for (let i = 0; i < NUM_WORKERS; i++) {
-      const worker = spawnProcess('consumer', i);
-      workers.push(worker);
-
-      worker.on('message', (msg: any) => {
-        if (msg.ready) {
-          readyWorkers++;
-          if (readyWorkers === NUM_WORKERS) {
-            console.log(`📡 All ${NUM_WORKERS} workers ready. Spawning producer...`);
-            producer = spawnProcess('producer');
-            producer.on('message', (pMsg: any) => {
-              if (pMsg.done) {
-                producerDone = true;
-                console.log('📤 Producer finished enqueuing all jobs.');
-              }
-            });
-          }
-        }
-      });
-    }
-
-    // Monitor progress periodically using a Redis client
-    const monitorRedis = new Redis(REDIS_CONFIG);
-    const queue = new Queue('perf-bench-queue', monitorRedis);
+    printRow('PUB/SUB (Simultaneous)', statsPubSub);
+    printRow('REPLAY (Queue Spooling)', statsReplay);
     
-    // Safety Timeout Watchdog: 180 seconds max (3 minutes)
-    const safetyTimeout = setTimeout(async () => {
-      console.log('\n🚨 SAFETY WATCHDOG TIMEOUT EXCEEDED: Performance benchmark took too long!');
-      console.log('Force-terminating all processes and exiting safely...');
-      clearInterval(interval);
-      if (producer) producer.kill();
-      for (const w of workers) w.kill();
-      await monitorRedis.quit();
-      process.exit(1);
-    }, 180000);
+    const ratio = (statsReplay.throughput / statsPubSub.throughput).toFixed(2);
+    console.log(`💡 Replay Mode is ${ratio}x as fast as Pub/Sub Mode.`);
+    console.log('======================================================\n');
+    
+    process.exit(0);
+  }
 
-    const interval = setInterval(async () => {
-      const metrics = await queue.getMetrics();
-      const processed = metrics.completed + metrics.failed;
-      const pct = ((processed / TOTAL_JOBS) * 100).toFixed(1);
-      console.log(`📊 Progress: ${processed}/${TOTAL_JOBS} jobs (${pct}%) — Active: ${metrics.active}`);
+  async function runMode(mode: 'pubsub' | 'replay') {
+    const redis = new Redis(REDIS_CONFIG);
+    await redis.flushdb();
 
-      if (processed >= TOTAL_JOBS) {
-        clearTimeout(safetyTimeout);
-        clearInterval(interval);
-        const duration = (Date.now() - startTime) / 1000;
-        const throughput = (TOTAL_JOBS / duration).toFixed(0);
+    const workers: any[] = [];
+    let readyWorkers = 0;
+    let producer: any = null;
 
-        console.log('\n======================================================');
-        console.log('🏎️  PERFORMANCE BENCHMARK RESULTS');
-        console.log('======================================================');
-        console.log(`Total Jobs Processed : ${TOTAL_JOBS}`);
-        console.log(`Total Duration       : ${duration.toFixed(2)} seconds`);
-        console.log(`Throughput Rate      : ${throughput} jobs/sec`);
-        console.log(`Multi-Process Config : 1 Producer, ${NUM_WORKERS} Consumers`);
-        console.log('======================================================\n');
+    const promise = new Promise<{ duration: number; throughput: number }>(async (resolve, reject) => {
+      const monitorRedis = new Redis(REDIS_CONFIG);
+      const queue = new Queue('perf-bench-queue', monitorRedis);
 
-        // Cleanup
-        producer.kill();
-        for (const w of workers) w.kill();
+      let startTime = 0;
+      let interval: NodeJS.Timeout | undefined;
+
+      const cleanup = async () => {
+        if (interval) clearInterval(interval);
+        if (producer) {
+          try { producer.kill(); } catch {}
+        }
+        for (const w of workers) {
+          try { w.kill(); } catch {}
+        }
         await monitorRedis.quit();
-        process.exit(0);
+        await redis.quit();
+      };
+
+      const safetyTimeout = setTimeout(async () => {
+        console.log(`\n🚨 SAFETY TIMEOUT EXCEEDED in ${mode} mode!`);
+        await cleanup();
+        reject(new Error('Timeout'));
+      }, 45000);
+
+      const checkProgress = async () => {
+        try {
+          const metrics = await queue.getMetrics();
+          const processed = metrics.completed + metrics.failed;
+          const pct = ((processed / TOTAL_JOBS) * 100).toFixed(1);
+          console.log(`   [${mode.toUpperCase()}] Progress: ${processed}/${TOTAL_JOBS} jobs (${pct}%) — Active: ${metrics.active}`);
+
+          if (processed >= TOTAL_JOBS) {
+            clearTimeout(safetyTimeout);
+            const duration = (Date.now() - startTime) / 1000;
+            const throughput = Number((TOTAL_JOBS / duration).toFixed(0));
+            await cleanup();
+            resolve({ duration, throughput });
+          }
+        } catch (err) {
+          // Ignore transient connection errors during shutdown
+        }
+      };
+
+      const spawnProducer = () => {
+        producer = fork(__filename, [], { env: { ...process.env, ROLE: 'producer', MODE: mode } });
+        return producer;
+      };
+
+      const spawnWorkers = () => {
+        startTime = Date.now();
+        for (let i = 0; i < NUM_WORKERS; i++) {
+          const worker = fork(__filename, [], {
+            env: { ...process.env, ROLE: 'consumer', MODE: mode, WORKER_INDEX: String(i) }
+          });
+          workers.push(worker);
+
+          worker.on('message', (msg: any) => {
+            if (msg.ready) {
+              readyWorkers++;
+              if (readyWorkers === NUM_WORKERS) {
+                interval = setInterval(checkProgress, 250);
+              }
+            }
+          });
+        }
+      };
+
+      if (mode === 'pubsub') {
+        spawnWorkers();
+        
+        const checkReady = setInterval(() => {
+          if (readyWorkers === NUM_WORKERS) {
+            clearInterval(checkReady);
+            spawnProducer();
+          }
+        }, 20);
+      } else {
+        console.log('   Enqueuing all 10k jobs to Redis first...');
+        const p = spawnProducer();
+        p.on('message', (msg: any) => {
+          if (msg.done) {
+            console.log('   All jobs enqueued. Starting consumer workers...');
+            spawnWorkers();
+          }
+        });
       }
-    }, 1000);
+    });
+
+    return promise;
   }
 
   runCoordinator();
@@ -113,7 +161,7 @@ if (!process.env.ROLE) {
       const promises: Promise<string>[] = [];
       for (let j = 0; j < batchSize && (i + j) < TOTAL_JOBS; j++) {
         const jobId = i + j;
-        const tenant = `tenant-${jobId % 5}`; // Rotated group to check group limits rules fallback
+        const tenant = `tenant-${jobId % 5}`;
         promises.push(
           queue.add(`task-${jobId}`, { num: jobId }, { groupId: tenant, removeOnComplete: false })
         );

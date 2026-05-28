@@ -1,13 +1,13 @@
 import { Redis, type RedisOptions } from 'ioredis';
 import { randomUUID } from 'node:crypto';
 import cronParser from 'cron-parser';
-import type { WorkerOptions, JobHandler, WorkerEvents, JobTransformation } from '../types/index.js';
+import type { WorkerOptions, JobHandler, WorkerEvents, JobTransformation, VoltrixRedis, JobPayload } from '../types/index.js';
 import { registerCommands } from './lua-scripts.js';
 import { Job } from './job.js';
 import { TypedEventEmitter } from '../utils/typed-emitter.js';
 
 export class Worker extends TypedEventEmitter<WorkerEvents> {
-  public readonly redis: Redis;
+  public readonly redis: VoltrixRedis;
   private readonly workerId = randomUUID();
   private running = false;
   private readonly activeJobs = new Map<
@@ -15,7 +15,6 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
     {
       job: Job;
       abortController: AbortController;
-      heartbeatInterval: NodeJS.Timeout;
       promise: Promise<void>;
     }
   >();
@@ -24,6 +23,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
   private pollerTimer?: NodeJS.Timeout;
   private schedulerTimer?: NodeJS.Timeout;
   private stalledTimer?: NodeJS.Timeout;
+  private heartbeatTimer?: NodeJS.Timeout;
   private wakeUpResolver?: () => void;
   private fullWakeUpResolver?: () => void;
 
@@ -34,14 +34,15 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
     private readonly options: WorkerOptions
   ) {
     super();
+    let client: Redis;
     if (redisClient instanceof Redis) {
-      this.redis = redisClient;
+      client = redisClient;
       this._ownConnection = false;
     } else {
-      this.redis = new Redis(redisClient as RedisOptions);
+      client = new Redis(redisClient as RedisOptions);
       this._ownConnection = true;
     }
-    registerCommands(this.redis);
+    this.redis = registerCommands(client);
   }
 
   async start(): Promise<void> {
@@ -55,17 +56,19 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
 
     // Register centralized concurrency limits in Redis using ZSET (scored by pattern length descending)
     const rulesKey = `voltrix:mq:${this.queueName}:concurrency_rules`;
-    await this.redis.del(rulesKey);
+    const pipeline = this.redis.pipeline();
+    pipeline.del(rulesKey);
     if (this.options.limitsRules) {
       for (const rule of this.options.limitsRules) {
-        await this.redis.zadd(rulesKey, rule.pattern.length, `${rule.pattern}:${rule.limit}`);
+        pipeline.zadd(rulesKey, rule.pattern.length, `${rule.pattern}:${rule.limit}`);
       }
     }
     // Register wildcard fallback rule with length 1
-    await this.redis.zadd(rulesKey, 1, `*:${this.options.concurrency ?? 1}`);
+    pipeline.zadd(rulesKey, 1, `*:${this.options.concurrency ?? 1}`);
+    await pipeline.exec();
 
     // Initialize Pub/Sub listener for immediate wakeup
-    const redisOpts = (this.redis as any).options;
+    const redisOpts = this.redis.options;
     this.pubsub = new Redis(redisOpts);
     await this.pubsub.subscribe(`voltrix:mq:${this.queueName}:events`);
     this.pubsub.on('message', () => {
@@ -79,6 +82,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
     this._startPollLoop();
     this._startSchedulerLoop();
     this._startStalledSweepLoop();
+    this._startHeartbeatLoop();
   }
 
   async shutdown(gracePeriodMs: number): Promise<void> {
@@ -89,6 +93,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
     if (this.pollerTimer) clearTimeout(this.pollerTimer);
     if (this.schedulerTimer) clearTimeout(this.schedulerTimer);
     if (this.stalledTimer) clearTimeout(this.stalledTimer);
+    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
 
     // Unsubscribe and disconnect Pub/Sub
     if (this.pubsub) {
@@ -113,17 +118,12 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
         new Promise((resolve) => setTimeout(resolve, gracePeriodMs))
       ]);
 
-      // Force abort and clear intervals for any remaining active jobs
-      for (const { job, heartbeatInterval } of this.activeJobs.values()) {
-        clearInterval(heartbeatInterval);
+      // Force abort for any remaining active jobs
+      for (const { job } of this.activeJobs.values()) {
         job.abort();
       }
     }
 
-    // Synchronously clear all intervals in activeJobs map just in case to prevent leaks
-    for (const { heartbeatInterval } of this.activeJobs.values()) {
-      clearInterval(heartbeatInterval);
-    }
     this.activeJobs.clear();
 
     if (this._ownConnection) {
@@ -136,7 +136,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
     const threshold = Date.now() - lockDuration;
     
     // Call Lua Stalled Sweep atomic script (maxStalledCount = 3)
-    const recovered: string[] = await (this.redis as any).voltrixCleanStalledJobs(
+    const recovered: string[] = await this.redis.voltrixCleanStalledJobs(
       this.queueName,
       String(threshold),
       String(Date.now()),
@@ -163,7 +163,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
 
         if (localActiveCount < workerConcurrency) {
           // Poll Redis for eligible job under group concurrency rules
-          const res = await (this.redis as any).voltrixAcquireJob(
+          const res = await this.redis.voltrixAcquireJob(
             this.queueName,
             this.workerId,
             String(this.options.concurrency ?? 1), // default group-level cap
@@ -173,9 +173,9 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
           if (res) {
             if (!this.running) return;
             const [jobId, groupId, payloadStr, jobName] = res;
-            let payload: any = { data: undefined, maxAttempts: 1 };
+            let payload: JobPayload = { data: undefined, maxAttempts: 1 };
             try {
-              payload = JSON.parse(payloadStr);
+              payload = JSON.parse(payloadStr) as JobPayload;
             } catch {}
 
             const abortController = new AbortController();
@@ -201,27 +201,8 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
             // Emit active event
             this.emit('active', job);
 
-            // Lease renewal heartbeat loop
-            const heartbeatInterval = setInterval(async () => {
-              try {
-                const heartbeatsKey = `voltrix:mq:${this.queueName}:heartbeats`;
-                const set = await this.redis.hset(heartbeatsKey, jobId, `${this.workerId}:${Date.now()}`);
-                // If Redis cleared the heartbeat key, or it returned 1 (new field set unexpectedly, indicating lock expired)
-                if (set === 1) {
-                  job.abort();
-                  clearInterval(heartbeatInterval);
-                } else {
-                  job.lastHeartbeatTime = Date.now();
-                }
-              } catch (err: any) {
-                job.abort();
-                clearInterval(heartbeatInterval);
-                this.emit('error', err);
-              }
-            }, lockDuration / 3);
-
             const promise = this._executeJob(job, payload);
-            this.activeJobs.set(jobId, { job, abortController, heartbeatInterval, promise });
+            this.activeJobs.set(jobId, { job, abortController, promise });
           } else {
             // Sleep when no eligible jobs
             await new Promise<void>((resolve) => {
@@ -246,8 +227,8 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
             }, 1000);
           });
         }
-      } catch (err: any) {
-        this.emit('error', err);
+      } catch (err) {
+        this.emit('error', err instanceof Error ? err : new Error(String(err)));
         // Sleep on error
         await new Promise<void>((resolve) => setTimeout(resolve, 1000));
       }
@@ -259,7 +240,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
     process.nextTick(loop);
   }
 
-  private async _executeJob(job: Job, payload: any): Promise<void> {
+  private async _executeJob(job: Job<unknown, unknown>, payload: JobPayload): Promise<void> {
     const startTime = Date.now();
     const cpuStart = process.cpuUsage();
 
@@ -311,7 +292,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
 
       // Complete job atomic operation
       const removeOnComplete = payload.removeOnComplete !== false ? 1 : 0;
-      await (this.redis as any).voltrixCompleteJob(
+      await this.redis.voltrixCompleteJob(
         this.queueName,
         job.id,
         job.group,
@@ -340,7 +321,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
             transformations: updatedTransformations // Pass transformations trace down to future cycles!
           });
 
-          await (this.redis as any).voltrixPushJob(
+          await this.redis.voltrixPushJob(
             this.queueName,
             nextJobId,
             job.group,
@@ -356,21 +337,23 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
 
           // Broadcast wakeup trigger
           await this.redis.publish(`voltrix:mq:${this.queueName}:events`, 'waiting');
-        } catch (cronErr: any) {
-          this.emit('error', new Error(`Cron rescheduling failed for job ${job.id}: ${cronErr.message}`));
+        } catch (cronErr) {
+          const errMsg = cronErr instanceof Error ? cronErr.message : String(cronErr);
+          this.emit('error', new Error(`Cron rescheduling failed for job ${job.id}: ${errMsg}`));
         }
       }
-    } catch (err: any) {
+    } catch (err) {
       if (job.isAborted()) return;
 
       const durationMs = Date.now() - startTime;
       const cpuDiff = process.cpuUsage(cpuStart);
+      const errMsg = err instanceof Error ? err.message : String(err);
       const trace: JobTransformation = {
         pluginId: 'voltrix:mq',
         pluginName: 'VoltrixMessageQueue',
         operation: `process:${job.name}:failed`,
         timestamp: Date.now(),
-        metadata: { error: err.message },
+        metadata: { error: errMsg },
         performance: {
           durationMs,
           cpuUserSec: cpuDiff.user / 1000000
@@ -394,7 +377,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
       const removeOnFail = payload.removeOnFail === true ? 1 : 0;
       
       // Fail job atomic operation (handles backoffs, retries, and DLQ)
-      await (this.redis as any).voltrixFailJob(
+      await this.redis.voltrixFailJob(
         this.queueName,
         job.id,
         job.group,
@@ -409,12 +392,8 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
       // Emit failed event
       this.emit('failed', job, err instanceof Error ? err : new Error(errorMsg));
     } finally {
-      // Clean heartbeat timer and active registry
-      const active = this.activeJobs.get(job.id);
-      if (active) {
-        clearInterval(active.heartbeatInterval);
-        this.activeJobs.delete(job.id);
-      }
+      // Clean active registry
+      this.activeJobs.delete(job.id);
       if (this.fullWakeUpResolver) {
         this.fullWakeUpResolver();
         this.fullWakeUpResolver = undefined;
@@ -428,13 +407,13 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
 
       try {
         // Move planified/delayed jobs to waiting
-        const count = await (this.redis as any).voltrixMoveDelayedToWaiting(this.queueName, String(Date.now()));
+        const count = await this.redis.voltrixMoveDelayedToWaiting(this.queueName, String(Date.now()));
         if (count > 0) {
           // Broadcast wakeup to other workers
           await this.redis.publish(`voltrix:mq:${this.queueName}:events`, 'waiting');
         }
-      } catch (err: any) {
-        this.emit('error', err);
+      } catch (err) {
+        this.emit('error', err instanceof Error ? err : new Error(String(err)));
       }
 
       this.schedulerTimer = setTimeout(loop, 1000);
@@ -450,13 +429,64 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
 
       try {
         await this.sweepStalled();
-      } catch (err: any) {
-        this.emit('error', err);
+      } catch (err) {
+        this.emit('error', err instanceof Error ? err : new Error(String(err)));
       }
 
       this.stalledTimer = setTimeout(loop, interval);
     };
 
     this.stalledTimer = setTimeout(loop, interval);
+  }
+
+  private _startHeartbeatLoop(): void {
+    const lockDuration = this.options.lockDuration ?? 30000;
+    const interval = Math.max(100, Math.floor(lockDuration / 3));
+
+    const loop = async () => {
+      if (!this.running) return;
+
+      try {
+        const activeSize = this.activeJobs.size;
+        if (activeSize > 0) {
+          const heartbeatsKey = `voltrix:mq:${this.queueName}:heartbeats`;
+          const pipeline = this.redis.pipeline();
+          
+          const jobsList: Array<{
+            job: Job<unknown, unknown>;
+            abortController: AbortController;
+            promise: Promise<void>;
+          }> = [];
+          for (const activeJob of this.activeJobs.values()) {
+            pipeline.hset(heartbeatsKey, activeJob.job.id, `${this.workerId}:${Date.now()}`);
+            jobsList.push(activeJob);
+          }
+
+          const results = await pipeline.exec();
+          if (results) {
+            for (let i = 0; i < results.length; i++) {
+              const resultInfo = results[i];
+              if (resultInfo) {
+                const [err, res] = resultInfo;
+                const activeJob = jobsList[i];
+                
+                if (err || res === 1) {
+                  // Lock expired or stolen
+                  activeJob.job.abort();
+                } else {
+                  activeJob.job.lastHeartbeatTime = Date.now();
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        this.emit('error', err instanceof Error ? err : new Error(String(err)));
+      }
+
+      this.heartbeatTimer = setTimeout(loop, interval);
+    };
+
+    this.heartbeatTimer = setTimeout(loop, interval);
   }
 }

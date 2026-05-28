@@ -3,11 +3,26 @@ export interface JobTransformation {
   pluginName: string;
   operation: string;
   timestamp: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   performance?: {
     durationMs: number;
     cpuUserSec?: number;
   };
+}
+
+export interface JobPayload {
+  data?: unknown;
+  attempts?: number;
+  maxAttempts?: number;
+  backoffType?: 'linear' | 'exponential';
+  backoffDelay?: number;
+  uniqueId?: string;
+  removeOnComplete?: boolean;
+  removeOnFail?: boolean;
+  cron?: string;
+  cronOptions?: Record<string, unknown>;
+  correlationId?: string;
+  transformations?: JobTransformation[];
 }
 
 export interface JobOptions {
@@ -36,7 +51,7 @@ export interface JobOptions {
   transformations?: JobTransformation[];
 }
 
-export interface Job<TData = any, TResult = any> {
+export interface Job<TData = unknown, TResult = unknown> {
   id: string;
   group: string;
   name: string;
@@ -79,7 +94,7 @@ export interface GroupMetrics {
   limit: number;              // Current concurrency limit set for this group (-1: unlimited)
 }
 
-export type JobHandler<TData = any, TResult = any> = (job: Job<TData, TResult>) => Promise<TResult> | TResult;
+export type JobHandler<TData = unknown, TResult = unknown> = (job: Job<TData, TResult>) => Promise<TResult> | TResult;
 
 export interface LimitRule {
   pattern: string;              // Glob pattern matching the groupId (e.g., 'message.qr.*')
@@ -95,7 +110,7 @@ export interface WorkerOptions {
   workerConcurrency?: number;   // Global concurrency limit for this worker instance (Default: 100)
 }
 
-export interface WorkerEvents<TData = any, TResult = any> {
+export interface WorkerEvents<TData = unknown, TResult = unknown> {
   active: (job: Job<TData, TResult>) => void;
   completed: (job: Job<TData, TResult>, result: TResult) => void;
   failed: (job: Job<TData, TResult>, error: Error) => void;
@@ -104,7 +119,65 @@ export interface WorkerEvents<TData = any, TResult = any> {
   error: (error: Error) => void;
 }
 
-export interface QueueEvents<TData = any> {
+export interface QueueEvents<TData = unknown> {
   waiting: (jobId: string, groupId: string) => void;
   delayed: (jobId: string, runAt: number) => void;
+}
+
+import type { Redis } from 'ioredis';
+
+export interface VoltrixRedis extends Redis {
+  voltrixPushJob(
+    queueName: string,
+    jobId: string,
+    groupId: string,
+    payload: string,
+    score: string,
+    delay: string,
+    jobName: string,
+    maxAttempts: string,
+    backoffType: string,
+    backoffDelay: string,
+    uniqueId: string
+  ): Promise<boolean>;
+
+  voltrixAcquireJob(
+    queueName: string,
+    workerId: string,
+    defaultConcurrency: string,
+    now: string
+  ): Promise<[string, string, string, string] | null>;
+
+  voltrixCompleteJob(
+    queueName: string,
+    jobId: string,
+    groupId: string,
+    removeOnComplete: string,
+    now: string
+  ): Promise<boolean>;
+
+  voltrixFailJob(
+    queueName: string,
+    jobId: string,
+    groupId: string,
+    errorMsg: string,
+    now: string,
+    removeOnFail: string
+  ): Promise<boolean>;
+
+  voltrixCleanStalledJobs(
+    queueName: string,
+    threshold: string,
+    now: string,
+    maxStalledCount: string
+  ): Promise<string[]>;
+
+  voltrixMoveDelayedToWaiting(
+    queueName: string,
+    now: string
+  ): Promise<number>;
+
+  voltrixGetQueueMetrics(
+    queueName: string
+  ): Promise<[number, number, number, number, number, number, number]>;
 }

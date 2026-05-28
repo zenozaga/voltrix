@@ -377,14 +377,18 @@ return {
   }
 };
 
-export function registerCommands(redis: Redis): void {
+import type { VoltrixRedis } from '../types/index.js';
+
+export function registerCommands(redis: Redis): VoltrixRedis {
+  const redisRecord = redis as unknown as Record<string, unknown>;
   for (const [name, config] of Object.entries(SCRIPTS)) {
     const cmdName = 'voltrix' + name.charAt(0).toUpperCase() + name.slice(1);
-    if (typeof (redis as any)[cmdName] !== 'function') {
+    if (typeof redisRecord[cmdName] !== 'function') {
       redis.defineCommand(cmdName, {
         numberOfKeys: config.numberOfKeys,
         lua: config.lua
       });
     }
   }
+  return redis as unknown as VoltrixRedis;
 }

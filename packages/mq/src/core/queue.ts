@@ -1,12 +1,12 @@
 import { Redis, type RedisOptions } from 'ioredis';
 import { randomUUID } from 'node:crypto';
-import type { QueueMetrics, GroupMetrics, JobOptions, QueueEvents } from '../types/index.js';
+import type { QueueMetrics, GroupMetrics, JobOptions, QueueEvents, VoltrixRedis, JobPayload } from '../types/index.js';
 import { registerCommands } from './lua-scripts.js';
 import { Job } from './job.js';
 import { TypedEventEmitter } from '../utils/typed-emitter.js';
 
 export class Queue extends TypedEventEmitter<QueueEvents> {
-  public readonly redis: Redis;
+  public readonly redis: VoltrixRedis;
   private readonly _ownConnection: boolean = false;
 
   constructor(
@@ -14,14 +14,15 @@ export class Queue extends TypedEventEmitter<QueueEvents> {
     redisClient: RedisOptions | Redis
   ) {
     super();
+    let client: Redis;
     if (redisClient instanceof Redis) {
-      this.redis = redisClient;
+      client = redisClient;
       this._ownConnection = false;
     } else {
-      this.redis = new Redis(redisClient as RedisOptions);
+      client = new Redis(redisClient as RedisOptions);
       this._ownConnection = true;
     }
-    registerCommands(this.redis);
+    this.redis = registerCommands(client);
   }
 
   async connect(): Promise<void> {
@@ -30,7 +31,7 @@ export class Queue extends TypedEventEmitter<QueueEvents> {
     }
   }
 
-  async add<TData = any>(
+  async add<TData = unknown>(
     name: string,
     data: TData,
     options: JobOptions & { groupId: string }
@@ -70,7 +71,7 @@ export class Queue extends TypedEventEmitter<QueueEvents> {
     });
 
     // Execute Push atomic script
-    await (this.redis as any).voltrixPushJob(
+    await this.redis.voltrixPushJob(
       this.name,
       jobId,
       groupId,
@@ -100,10 +101,10 @@ export class Queue extends TypedEventEmitter<QueueEvents> {
     const hash = await this.redis.hgetall(jobKey);
     if (!hash || !hash.id) return null;
     
-    let meta: any = { data: undefined };
+    let meta: JobPayload = { data: undefined };
     if (hash.payload) {
       try {
-        meta = JSON.parse(hash.payload);
+        meta = JSON.parse(hash.payload) as JobPayload;
       } catch {}
     }
 
@@ -112,7 +113,7 @@ export class Queue extends TypedEventEmitter<QueueEvents> {
       group: hash.group,
       name: hash.name ?? '',
       data: meta.data,
-      state: hash.state as any,
+      state: hash.state as 'waiting' | 'active' | 'delayed' | 'completed' | 'failed',
       attempts: Number(hash.attempts || '0'),
       maxAttempts: Number(hash.maxAttempts || '1'),
       stalledCount: Number(hash.stalledCount || '0'),
@@ -127,7 +128,7 @@ export class Queue extends TypedEventEmitter<QueueEvents> {
   }
 
   async getMetrics(): Promise<QueueMetrics> {
-    const res = await (this.redis as any).voltrixGetQueueMetrics(this.name);
+    const res = await this.redis.voltrixGetQueueMetrics(this.name);
     return {
       waiting: Number(res[0] || '0'),
       active: Number(res[1] || '0'),
