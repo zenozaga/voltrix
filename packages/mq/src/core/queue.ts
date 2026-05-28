@@ -4,6 +4,7 @@ import type { QueueMetrics, GroupMetrics, JobOptions, QueueEvents, VoltrixRedis,
 import { registerCommands } from './lua-scripts.js';
 import { Job } from './job.js';
 import { TypedEventEmitter } from '../utils/typed-emitter.js';
+import { serializeVbp, deserializeVbp } from '../utils/binary-protocol.js';
 
 export class Queue extends TypedEventEmitter<QueueEvents> {
   public readonly redis: VoltrixRedis;
@@ -55,7 +56,7 @@ export class Queue extends TypedEventEmitter<QueueEvents> {
     const correlationId = options.correlationId ?? randomUUID();
     const transformations = options.transformations ?? [];
 
-    const payload = JSON.stringify({
+    const payload = serializeVbp({
       data,
       attempts: 0,
       maxAttempts: options.attempts ?? 1,
@@ -98,30 +99,42 @@ export class Queue extends TypedEventEmitter<QueueEvents> {
 
   async getJob(jobId: string): Promise<Job | null> {
     const jobKey = `voltrix:mq:${this.name}:job:${jobId}`;
-    const hash = await this.redis.hgetall(jobKey);
+    const hash = await this.redis.hgetallBuffer(jobKey);
     if (!hash || !hash.id) return null;
-    
+
+    const id = hash.id.toString('utf-8');
+    const group = hash.group.toString('utf-8');
+    const name = hash.name ? hash.name.toString('utf-8') : '';
+    const state = hash.state ? hash.state.toString('utf-8') as 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' : 'waiting';
+    const attempts = Number(hash.attempts ? hash.attempts.toString('utf-8') : '0');
+    const maxAttempts = Number(hash.maxAttempts ? hash.maxAttempts.toString('utf-8') : '1');
+    const stalledCount = Number(hash.stalledCount ? hash.stalledCount.toString('utf-8') : '0');
+    const progress = Number(hash.progress ? hash.progress.toString('utf-8') : '0');
+    const runAt = hash.runAt ? Number(hash.runAt.toString('utf-8')) : undefined;
+    const result = hash.result ? JSON.parse(hash.result.toString('utf-8')) as unknown : undefined;
+    const error = hash.error ? hash.error.toString('utf-8') : undefined;
+
     let meta: JobPayload = { data: undefined };
     if (hash.payload) {
       try {
-        meta = JSON.parse(hash.payload) as JobPayload;
+        meta = deserializeVbp(hash.payload);
       } catch {}
     }
 
     return new Job({
-      id: hash.id,
-      group: hash.group,
-      name: hash.name ?? '',
+      id,
+      group,
+      name,
       data: meta.data,
-      state: hash.state as 'waiting' | 'active' | 'delayed' | 'completed' | 'failed',
-      attempts: Number(hash.attempts || '0'),
-      maxAttempts: Number(hash.maxAttempts || '1'),
-      stalledCount: Number(hash.stalledCount || '0'),
-      progress: Number(hash.progress || '0'),
-      timestamp: Number(hash.timestamp || Date.now()),
-      runAt: hash.runAt ? Number(hash.runAt) : undefined,
-      result: hash.result ? JSON.parse(hash.result) : undefined,
-      error: hash.error,
+      state,
+      attempts,
+      maxAttempts,
+      stalledCount,
+      progress,
+      timestamp: Number(hash.timestamp ? hash.timestamp.toString('utf-8') : Date.now()),
+      runAt,
+      result,
+      error,
       correlationId: meta.correlationId,
       transformations: meta.transformations
     }, this.redis, this.name);

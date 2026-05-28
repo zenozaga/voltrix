@@ -5,6 +5,7 @@ import type { WorkerOptions, JobHandler, WorkerEvents, JobTransformation, Voltri
 import { registerCommands } from './lua-scripts.js';
 import { Job } from './job.js';
 import { TypedEventEmitter } from '../utils/typed-emitter.js';
+import { serializeVbp, deserializeVbp } from '../utils/binary-protocol.js';
 
 export class Worker extends TypedEventEmitter<WorkerEvents> {
   public readonly redis: VoltrixRedis;
@@ -163,7 +164,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
 
         if (localActiveCount < workerConcurrency) {
           // Poll Redis for eligible job under group concurrency rules
-          const res = await this.redis.voltrixAcquireJob(
+          const res = await this.redis.voltrixAcquireJobBuffer(
             this.queueName,
             this.workerId,
             String(this.options.concurrency ?? 1), // default group-level cap
@@ -172,10 +173,14 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
 
           if (res) {
             if (!this.running) return;
-            const [jobId, groupId, payloadStr, jobName] = res;
+            const [jobIdBuf, groupIdBuf, payloadBuf, jobNameBuf] = res;
+            const jobId = jobIdBuf.toString('utf-8');
+            const groupId = groupIdBuf.toString('utf-8');
+            const jobName = jobNameBuf.toString('utf-8');
+
             let payload: JobPayload = { data: undefined, maxAttempts: 1 };
             try {
-              payload = JSON.parse(payloadStr) as JobPayload;
+              payload = deserializeVbp(payloadBuf);
             } catch {}
 
             const abortController = new AbortController();
@@ -283,7 +288,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
 
       // Update payload in Redis to save transformations trace
       const jobKey = `voltrix:mq:${this.queueName}:job:${job.id}`;
-      const completedPayload = JSON.stringify({
+      const completedPayload = serializeVbp({
         ...payload,
         transformations: updatedTransformations
       });
@@ -367,7 +372,7 @@ export class Worker extends TypedEventEmitter<WorkerEvents> {
       
       // Update payload in Redis to save transformations trace
       const jobKey = `voltrix:mq:${this.queueName}:job:${job.id}`;
-      const failedPayload = JSON.stringify({
+      const failedPayload = serializeVbp({
         ...payload,
         attempts: Number(payload.attempts || 0) + 1,
         transformations: updatedTransformations

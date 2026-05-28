@@ -131,7 +131,7 @@ export interface VoltrixRedis extends Redis {
     queueName: string,
     jobId: string,
     groupId: string,
-    payload: string,
+    payload: string | Buffer,
     score: string,
     delay: string,
     jobName: string,
@@ -147,6 +147,13 @@ export interface VoltrixRedis extends Redis {
     defaultConcurrency: string,
     now: string
   ): Promise<[string, string, string, string] | null>;
+
+  voltrixAcquireJobBuffer(
+    queueName: string,
+    workerId: string,
+    defaultConcurrency: string,
+    now: string
+  ): Promise<[Buffer, Buffer, Buffer, Buffer] | null>;
 
   voltrixCompleteJob(
     queueName: string,
