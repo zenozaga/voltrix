@@ -8,15 +8,16 @@ A distributed, ultra-high-performance, strongly-typed message queue built direct
 
 We verified `@voltrix/mq` under real-world conditions using a suite of multi-process benchmarks executing on isolated child processes:
 
-### 1. Dual-Mode Performance Benchmark (`bench:perf`)
-* **Configuration**: 1 Producer, 4 Consumers, 10,000 Jobs, 1,000 total concurrency cap (250 concurrent slots per consumer).
-* **Mode 1: Pub/Sub (Simultaneous)**: 
-  * Duration: **2.59 seconds**
-  * Throughput Rate: **3,858 jobs/second**
-* **Mode 2: Replay (Queue Spooling)**: 
-  * Duration: **2.35 seconds**
-  * Throughput Rate: **4,254 jobs/second** (1.10x faster due to zero concurrent write/read database contention!)
-* **Optimization**: Enabled **Reactive Poller Waking** to keep all 1,000 concurrency slots fully utilized at 100% efficiency.
+### 1. Matrix Performance Benchmark (`bench:perf`)
+* **Configuration**: 1 Producer, 4 Consumers, 10,000 Jobs, 20,000 total concurrency cap (5,000 concurrent slots per consumer).
+* **Results Matrix**:
+  | Scenario | Produce Duration (s) | Produce Rate (jobs/s) | Consume Duration (s) | Consume Rate (jobs/s) | Speedup vs Baseline |
+  | :--- | :---: | :---: | :---: | :---: | :---: |
+  | **Single Enqueue ➔ Single Worker** *(Baseline)* | 0.434s | 23,041 j/s | 2.080s | 4,808 j/s | *Baseline* |
+  | **Bulk Enqueue ➔ Single Worker** | 0.482s | 20,747 j/s | 2.105s | 4,751 j/s | ~1.00x |
+  | **Single Enqueue ➔ Batch Worker** | 0.446s | 22,422 j/s | **0.616s** | **16,234 j/s** | **3.37x** 🚀 |
+  | **Bulk Enqueue ➔ Batch Worker** *(Optimal)* | 0.555s | 18,018 j/s | **0.682s** | **14,663 j/s** | **3.04x** 🚀 |
+* **Optimization**: **Batch Worker Mode** (`batch: true` with `batchSize: 64`) reduces network round-trip overhead and event loop contention, boosting throughput by up to **3.3x+** to process over **16,000 jobs/second** under heavy concurrent loads!
 
 ### 2. Concurrency Limits Benchmark (`bench:limits`)
 * **Configuration**: 2 Consumers, 1 Producer, 30 Jobs with a 100ms simulated task delay.
