@@ -1,6 +1,6 @@
 {
   "name": "@voltrix/security",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "High-performance distributed security package (CORS, Rate Limiting, IP Firewall, CSRF, Helmet, Sessions) for Voltrix",
   "type": "module",
   "main": "dist/index.js",

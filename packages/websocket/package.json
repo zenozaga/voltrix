@@ -1,6 +1,6 @@
 {
   "name": "@voltrix/websocket",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "High-performance, programmatic-first and decorator-driven WebSocket package with pluggable adapters and distributed pub/sub for Voltrix",
   "type": "module",
   "main": "dist/index.js",

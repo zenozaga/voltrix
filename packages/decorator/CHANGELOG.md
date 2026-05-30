@@ -1,5 +1,15 @@
 # @voltrix/decorator
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [c41c85e]
+- Updated dependencies [c41c85e]
+  - @voltrix/core@0.3.0
+  - @voltrix/express@0.2.1
+  - @voltrix/injector@0.2.2
+
 ## 0.2.1
 
 ### Patch Changes
