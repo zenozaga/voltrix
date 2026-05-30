@@ -41,6 +41,8 @@ Multi-core · 24 threads · SO_REUSEPORT · loopback:
 | [`@voltrix/swagger`](packages/swagger) | OpenAPI 3.0 spec generator — programmatic and decorator APIs |
 | [`@voltrix/events`](packages/events) | Typed event bus with priority, wildcards, middleware, and pluggable transport |
 | [`@voltrix/mq`](packages/mq) | High-performance distributed message queue with group concurrency limits, reactive poller, lease fencing, DLQ, and DI decorators |
+| [`@voltrix/security`](packages/security) | High-performance distributed security suite (CORS, Helmet, Rate Limiting, IP Firewall, CSRF, Encrypted Sessions) |
+| [`@voltrix/websocket`](packages/websocket) | Programmatic-first and decorator-driven WebSocket suite with local C++ and distributed Redis pub/sub |
 | [`@voltrix/core`](packages/core) | Shared types and interfaces |
 
 ## Quick Start — `@voltrix/server`

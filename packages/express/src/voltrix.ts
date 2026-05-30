@@ -30,7 +30,7 @@ export class Voltrix extends Renderer {
   }
 
   private _setupBridge(): void {
-    this.server.onRequest((ctx: Ctx) => {
+    this.server.onRequest(async (ctx: Ctx) => {
       const eCtx = ctx as ExpressCtx;
       const req = new Request(ctx);
       const res = new Response(ctx, this);
@@ -39,7 +39,7 @@ export class Voltrix extends Renderer {
 
       if (this.globalMiddlewares.length === 0) return;
 
-      return (async () => {
+      await (async () => {
         for (const mw of this.globalMiddlewares) {
           await new Promise<void>((resolve, reject) => {
             const next = (err?: unknown) => err ? reject(err) : resolve();

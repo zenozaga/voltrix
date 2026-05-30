@@ -22,6 +22,7 @@ export interface IResponse {
   readonly isAborted: boolean;
   locals: Record<string, any>;
 
+  setHeader(name: string, value: string): IResponse;
   json(data: any): void;
   send(data: string): void;
   status(code: number): IResponse;
