@@ -1,5 +1,13 @@
 # @voltrix/injector
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [c41c85e]
+- Updated dependencies [c41c85e]
+  - @voltrix/core@0.3.0
+
 ## 0.2.1
 
 ### Patch Changes

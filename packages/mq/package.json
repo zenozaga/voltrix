@@ -1,6 +1,6 @@
 {
   "name": "@voltrix/mq",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "High-performance distributed message queue with group concurrency and decorator support for Voltrix",
   "type": "module",
   "main": "dist/index.js",

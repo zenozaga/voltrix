@@ -1,6 +1,6 @@
 {
   "name": "@voltrix/injector",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Dependency injection container with decorator and reflect-metadata support for Voltrix framework",
   "type": "module",
   "main": "dist/index.js",
